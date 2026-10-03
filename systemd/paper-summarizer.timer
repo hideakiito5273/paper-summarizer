@@ -1,0 +1,10 @@
+[Unit]
+Description=Run paper summarizer every 6 hours
+
+[Timer]
+OnCalendar=*-*-* 00/6:00:00
+# 停止中に実行時刻を過ぎていたら起動後すぐに実行
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,21 @@
+[Unit]
+Description=Paper summarizer (local LLM)
+Wants=ollama.service
+After=network-online.target ollama.service
+
+[Service]
+Type=oneshot
+User=ito
+Group=ito
+WorkingDirectory=/home/ito/paper-summarizer
+ExecStart=/home/ito/paper-summarizer/.venv/bin/paper-summarizer run
+# 全体の処理時間に上限は設けない (LLM 呼び出し単位のタイムアウトはアプリ側で管理)
+TimeoutStartSec=infinity
+Nice=5
+# 外部送信の抑止: Docling/HuggingFace のモデルは事前ダウンロード済みのものだけを使う
+Environment=HF_HUB_OFFLINE=1
+Environment=HF_HUB_DISABLE_TELEMETRY=1
+Environment=DO_NOT_TRACK=1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,57 @@
+# paper-summarizer 設定ファイル
+# 秘密情報 (Gmail アプリパスワード等) はここに書かず .env に置く。
+
+[paths]
+root = "/data/papers"                     # inbox/ library/ reviews/ failed/ を置く場所
+db = "/data/papers/.state/papers.sqlite3" # 処理状態 DB (Syncthing の同期対象外にする)
+log_dir = "/var/log/paper-summarizer"
+work_dir = "/data/papers/.state/work"     # 抽出中間ファイル (図の画像など)
+
+[scan]
+# 投稿直後 (同期途中) のファイルを避けるため、最終更新からこの秒数が経過したものだけ処理する
+min_age_seconds = 120
+max_attempts = 3                          # これを超えて失敗したら failed/ へ移動
+
+[ollama]
+url = "http://127.0.0.1:11434"
+model = "qwen3.8:27b-q8_0"                # 本文要約・検証用
+vision_model = "qwen3.8:27b-q8_0"         # 図・数式画像の読み取り用 (同一モデルで可)
+num_ctx = 65536
+temperature = 0.3
+num_predict = 32768                       # 1 応答の最大生成トークン (thinking 含む)
+think = true                              # 推論 (thinking) モードを使う
+keep_alive = "30m"
+# LLM 1 リクエストのタイムアウト。全体の処理時間には上限を設けない。
+# ストリーミングで受信し、トークンが途切れた時間 (idle) で判定する。
+idle_timeout_seconds = 900
+connect_timeout_seconds = 30
+request_retries = 2
+
+[extract]
+# docling-tools models download で取得したモデル。これを使うことで実行時にネット接続しない
+artifacts_path = "~/.cache/docling/models"
+formula_enrichment = true                 # 数式を LaTeX として抽出 (Docling)
+formula_vlm = "all"                       # "all": 全数式を VLM で読み直す / "fallback": 失敗分のみ / "off"
+table_mode = "accurate"                   # "accurate" | "fast"
+image_scale = 2.0                         # 図の切り出し解像度
+ocr = false                               # スキャン PDF を扱う場合は true
+describe_figures = true                   # 図を VLM で読み取って本文に差し込む
+max_figures = 40
+
+[summarize]
+chunk_chars = 24000                       # 分割要約 1 チャンクの最大文字数
+section_char_limit = 500                  # 各項目の文字数上限 (プロンプトと一致させる)
+verify_rounds = 3                         # 自己検証 → 修正 のループ回数上限
+verify_full_max_chars = 200000            # これ以下の論文は全文と一括照合 (超える場合は分割照合)
+verify_num_ctx = 131072                   # 照合時のコンテキスト長
+language = "ja"
+review_num_ctx = 131072                   # プロジェクトレビュー時のコンテキスト長
+review_max_input_chars = 60000            # これを超える場合は分割して部分レビュー → 統合
+
+[notify]
+enabled = true
+smtp_host = "smtp.gmail.com"
+smtp_port = 587
+# 送信元/宛先アドレスとアプリパスワードは .env の
+# NOTIFY_FROM / NOTIFY_TO / SMTP_PASSWORD で指定する
+include_titles = true                     # 本文に論文タイトルまで載せる (要旨は載せない)

@@ -1,0 +1,166 @@
+import os
+import time
+from pathlib import Path
+
+import pytest
+
+from paper_summarizer.config import Config, Paths, ensure_dirs
+from paper_summarizer.db import DB
+from paper_summarizer.extract import _replace_in_order, split_chunks
+from paper_summarizer.notify import build_message
+from paper_summarizer.output import paper_dir_name
+from paper_summarizer.pipeline import RunReport, project_of, scan
+from paper_summarizer.prompts import render
+from paper_summarizer.summarize import body_chars, format_issues, normalize, split_sections
+
+GOOD = """## 1. どんなもの？
+- A
+  - B
+## 2. 先行研究を比べてどこがすごい？
+- C
+## 3. 技術や手法の肝はどこ？
+- D
+## 4. どうやって有効だと検証した？
+- E
+## 5. 議論はある？
+- F
+## 6. 次に読むべき論文は？
+- G
+"""
+
+
+def test_split_chunks_respects_limit():
+    md = "\n".join(f"## S{i}\n" + ("word " * 300) for i in range(20))
+    chunks = split_chunks(md, 4000)
+    assert all(len(c) <= 4000 for c in chunks)
+    assert "".join(chunks).replace("\n", "") .count("word") == md.count("word")
+
+
+def test_split_chunks_long_paragraph():
+    chunks = split_chunks("x" * 10000, 3000)
+    assert all(len(c) <= 3000 for c in chunks) and sum(map(len, chunks)) == 10000
+
+
+def test_format_ok_and_limits():
+    assert format_issues(GOOD, 500) == []
+    long = GOOD.replace("- A", "- " + "あ" * 501)
+    issues = format_issues(long, 500)
+    assert len(issues) == 1 and issues[0]["section"] == 1
+    missing = GOOD.split("## 6.")[0]
+    assert any(i["section"] == 6 for i in format_issues(missing, 500))
+
+
+def test_normalize_strips_preamble():
+    out = normalize("はい、要約です。\n```markdown\n" + GOOD + "```")
+    assert out.startswith("## 1.") and len(split_sections(out)) == 6
+
+
+def test_body_chars_ignores_bullets():
+    assert body_chars("- ab\n  - cd") == 4
+
+
+def test_replace_in_order():
+    assert _replace_in_order("a<m>b<m>c", "<m>", ["1", "2"]) == "a1b2c"
+
+
+def test_render_requires_vars():
+    with pytest.raises(KeyError):
+        render("figure")
+    assert "キャプション: X" in render("figure", caption="X")
+
+
+def test_paper_dir_name():
+    meta = {"year": 2024, "authors": ["Smith, John"], "short_title": "Attention is all"}
+    assert paper_dir_name(meta) == "2024_Smith_Attention-is-all"
+    assert paper_dir_name({}) == "XXXX_Unknown_untitled"
+
+
+# ---- scan / 状態遷移 ---------------------------------------------------------
+@pytest.fixture
+def env(tmp_path):
+    paths = Paths(root=tmp_path / "papers", db=tmp_path / "state" / "db.sqlite3",
+                  log_dir=tmp_path / "logs", work_dir=tmp_path / "work")
+    cfg = Config(paths=paths, scan={"min_age_seconds": 0}, ollama={"model": "m"}, extract={},
+                 summarize={}, notify={}, secrets={})
+    ensure_dirs(cfg)
+    return cfg, DB(paths.db)
+
+
+def _pdf(path: Path, content: bytes = b"%PDF-1.4 test") -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    old = time.time() - 600
+    os.utime(path, (old, old))
+    return path
+
+
+def test_scan_registers_and_ignores_temp(env):
+    cfg, db = env
+    _pdf(cfg.paths.inbox / "projA" / "a.pdf")
+    _pdf(cfg.paths.inbox / "root.pdf", b"other")
+    _pdf(cfg.paths.inbox / "projA" / ".syncthing.b.pdf.tmp")
+    _pdf(cfg.paths.inbox / "projA" / ".stversions" / "old.pdf", b"old")
+    scan(cfg, db, RunReport())
+    rows = db.pending()
+    assert {(r["project"], r["source_name"]) for r in rows} == {("projA", "a.pdf"), ("_unsorted", "root.pdf")}
+    scan(cfg, db, RunReport())  # 2 回目は増えない
+    assert len(db.pending()) == 2
+
+
+def test_scan_skips_fresh_files(env):
+    cfg, db = env
+    cfg.scan["min_age_seconds"] = 120
+    p = cfg.paths.inbox / "projA" / "new.pdf"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(b"%PDF")
+    scan(cfg, db, RunReport())
+    assert db.pending() == []
+
+
+def test_duplicate_same_project_goes_to_failed(env):
+    cfg, db = env
+    out = cfg.paths.library / "projA" / "x"
+    out.mkdir(parents=True)
+    pid = db.add(sha256="h", project="projA", source_name="a.pdf", inbox_path="", status="done")
+    import hashlib
+    content = b"%PDF dup"
+    db.update(pid, sha256=hashlib.sha256(content).hexdigest(), output_dir=str(out))
+    _pdf(cfg.paths.inbox / "projA" / "copy.pdf", content)
+    report = RunReport()
+    scan(cfg, db, report)
+    assert len(report.duplicates) == 1
+    assert (cfg.paths.failed / "projA" / "copy.pdf").exists()
+    assert (cfg.paths.failed / "projA" / "copy.pdf.error.txt").exists()
+
+
+def test_replacement_links_previous(env):
+    cfg, db = env
+    old = db.add(sha256="old", project="projA", source_name="a.pdf", inbox_path="", status="done")
+    _pdf(cfg.paths.inbox / "projA" / "a.pdf", b"%PDF new version")
+    scan(cfg, db, RunReport())
+    (row,) = db.pending()
+    assert row["replaces"] == old
+
+
+def test_missing_file_marked(env):
+    cfg, db = env
+    p = _pdf(cfg.paths.inbox / "projA" / "a.pdf")
+    scan(cfg, db, RunReport())
+    p.unlink()
+    scan(cfg, db, RunReport())
+    assert db.pending() == []
+
+
+def test_project_of(tmp_path):
+    assert project_of(tmp_path / "p" / "a.pdf", tmp_path) == "p"
+    assert project_of(tmp_path / "a.pdf", tmp_path) == "_unsorted"
+
+
+def test_mail_has_titles_not_content():
+    r = RunReport(done=[{"id": 1, "title": "Paper T", "project": "p", "minutes": 3.0}],
+                  failed=[{"name": "b.pdf", "project": "p", "error": "ValueError: x", "final": True}])
+    subject, body = build_message(r, True, "rid")
+    assert "完了 1 件" in subject and "失敗 1 件" in subject
+    assert "Paper T" in body and "b.pdf" in body
+    _, body2 = build_message(r, False, "rid")
+    assert "Paper T" not in body2

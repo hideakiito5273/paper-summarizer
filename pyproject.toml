@@ -1,0 +1,22 @@
+[project]
+name = "paper-summarizer"
+version = "0.1.0"
+description = "DGX Spark 上のローカル LLM で論文 PDF を自動要約する"
+requires-python = ">=3.12"
+dependencies = [
+    "docling",
+    "httpx",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+paper-summarizer = "paper_summarizer.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
