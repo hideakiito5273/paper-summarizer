@@ -1,5 +1,7 @@
 # paper-summarizer
 
+設計の詳細は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) を参照。
+
 DGX Spark 上のローカル LLM (Ollama) で論文 PDF を自動要約するシステム。
 論文ファイルは外部サービスに送信しない (共有は Syncthing の P2P 同期、推論はローカル)。
 
