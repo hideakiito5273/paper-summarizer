@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import shutil
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -18,6 +19,8 @@ HISTORY_DIR = "_history"
 
 
 def slug(text: str, max_len: int = 60) -> str:
+    # アクセント付き文字は基底文字に置き換える (Bozdağ → Bozdag)
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
     text = re.sub(r"[^\w\-]+", "-", text, flags=re.ASCII).strip("-")
     return re.sub(r"-{2,}", "-", text)[:max_len].strip("-") or "untitled"
 

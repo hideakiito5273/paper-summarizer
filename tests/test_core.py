@@ -73,6 +73,7 @@ def test_paper_dir_name():
     meta = {"year": 2024, "authors": ["Smith, John"], "short_title": "Attention is all"}
     assert paper_dir_name(meta) == "2024_Smith_Attention-is-all"
     assert paper_dir_name({}) == "XXXX_Unknown_untitled"
+    assert paper_dir_name({"year": 2011, "authors": ["Ebru Bozdağ"], "short_title": "misfit"}) == "2011_Bozdag_misfit"
 
 
 # ---- scan / 状態遷移 ---------------------------------------------------------
