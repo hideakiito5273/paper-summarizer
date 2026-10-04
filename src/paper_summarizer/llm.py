@@ -102,6 +102,11 @@ class OllamaClient:
                 log.warning("LLM 呼び出し失敗 stage=%s attempt=%d/%d: %r", stage, attempt + 1, retries + 1, e)
                 time.sleep(min(60, 10 * (attempt + 1)))
                 continue
+            except LLMError as e:  # 生成中の Ollama エラー (繰り返しループによる打ち切り等) はサンプリングし直す
+                last_err = e
+                self._record(stage, model, None, None, time.monotonic() - t0, ok=False)
+                log.warning("LLM 生成エラー stage=%s attempt=%d/%d: %s", stage, attempt + 1, retries + 1, e)
+                continue
             self._record(stage, model, res.prompt_tokens, res.eval_tokens, res.duration_s, ok=True)
             log.info(
                 "LLM stage=%s model=%s prompt_tok=%s eval_tok=%s %.1fs done=%s",

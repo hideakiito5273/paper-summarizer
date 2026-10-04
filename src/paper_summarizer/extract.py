@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .llm import OllamaClient
+from .llm import LLMError, OllamaClient, OllamaUnavailable
 from .prompts import render
 
 log = logging.getLogger(__name__)
@@ -108,8 +108,14 @@ class Extractor:
                 continue
             p = fig_dir / f"formula_{j:03d}.png"
             img.save(p)
-            res = llm.chat(render("formula", docling=item.text or "(なし)"), stage="formula",
-                           model=vision_model, images=[p], think=False)
+            try:
+                res = llm.chat(render("formula", docling=item.text or "(なし)"), stage="formula",
+                               model=vision_model, images=[p], think=False)
+            except OllamaUnavailable:
+                raise
+            except LLMError as e:  # 1 つの数式の失敗で論文全体を落とさない (Docling の結果を使う)
+                log.warning("数式 %d の VLM 読み取りに失敗、Docling の結果を使用: %s", j, e)
+                continue
             latex = _clean_latex(res.content)
             if latex and latex != "判読不可":
                 item.text = latex
@@ -134,8 +140,15 @@ class Extractor:
             if _too_small(fig.path):
                 fig.description = "(小さな画像のため省略)"
                 continue
-            res = llm.chat(render("figure", caption=fig.caption or "(なし)"), stage="figure",
-                           model=vision_model, images=[fig.path], think=False)
+            try:
+                res = llm.chat(render("figure", caption=fig.caption or "(なし)"), stage="figure",
+                               model=vision_model, images=[fig.path], think=False)
+            except OllamaUnavailable:
+                raise
+            except LLMError as e:
+                log.warning("図 %d の VLM 読み取りに失敗、キャプションのみ使用: %s", fig.index + 1, e)
+                fig.description = "(読み取り失敗)"
+                continue
             fig.description = res.content.strip()
 
         markdown = _replace_in_order(markdown, FIG_MARK, [_figure_block(f) for f in figures])
