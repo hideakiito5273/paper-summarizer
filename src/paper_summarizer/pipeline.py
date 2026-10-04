@@ -184,6 +184,7 @@ def process_pending(cfg: Config, db: DB, llm: OllamaClient, report: RunReport) -
             continue
         finally:
             llm.paper_id = None
+            llm.cache_dir = None
 
         dur = time.monotonic() - t0
         db.update(pid, status="done", finished_at=now(), duration_s=round(dur, 1), last_error=None)
@@ -195,12 +196,23 @@ def process_pending(cfg: Config, db: DB, llm: OllamaClient, report: RunReport) -
         log.info("==== 処理完了 #%d (%.1f 分)", pid, dur / 60)
 
 
+def _read_text(path: Path) -> str | None:
+    try:
+        return path.read_text().strip()
+    except OSError:
+        return None
+
+
 def _process_one(cfg: Config, db: DB, llm: OllamaClient, extractor: Extractor, row, pdf: Path) -> dict:
     if not pdf.exists():
         raise FileNotFoundError(pdf)
+    # 作業ディレクトリは成功時のみ削除する。再試行時は LLM 応答キャッシュで成功済みの段階を再利用する
     work = cfg.paths.work_dir / str(row["id"])
-    if work.exists():
-        shutil.rmtree(work)
+    if row["sha256"] != _read_text(work / "sha256"):
+        shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
+    (work / "sha256").write_text(row["sha256"])
+    llm.cache_dir = work / "llm_cache"
     vision_model = cfg.ollama.get("vision_model", cfg.ollama["model"])
 
     ext = extractor.extract(pdf, work, llm, vision_model)

@@ -79,8 +79,10 @@ def verification_label(v: dict) -> str:
     n = len(v.get("rounds", []))
     if v.get("converged"):
         return f"{n} ラウンドで指摘なし"
-    last = v["rounds"][-1]["issues"] if v.get("rounds") else []
-    return f"{n} ラウンド実施 (最終ラウンドの指摘 {len(last)} 件を修正済み・再照合なし)"
+    last = v["rounds"][-1] if v.get("rounds") else {"issues": []}
+    if last.get("revise_failed") or last.get("revise_rejected"):
+        return f"{n} ラウンド実施 (最終ラウンドの指摘 {len(last['issues'])} 件は未修正)"
+    return f"{n} ラウンド実施 (最終ラウンドの指摘 {len(last['issues'])} 件を修正済み・再照合なし)"
 
 
 def write_outputs(out_dir: Path, pdf: Path, meta: dict, summary_md: str, verification: dict,

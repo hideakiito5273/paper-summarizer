@@ -87,9 +87,19 @@ def summarize(ext: Extracted, title: str, llm: OllamaClient, cfg: dict) -> Summa
         if not issues:
             result.converged = True
             break
-        res = llm.chat(render("revise", base_prompt=base_prompt, summary=summary,
-                              issues=_format_issue_list(issues), format=fmt), stage=f"revise:r{rnd}")
-        summary = normalize(res.content)
+        try:
+            res = llm.chat(render("revise", base_prompt=base_prompt, summary=summary,
+                                  issues=_format_issue_list(issues), format=fmt), stage=f"revise:r{rnd}")
+        except LLMError as e:  # 修正に失敗しても、それまでの要約は有効なので残す
+            log.warning("修正 round %d に失敗、直前の要約を採用して検証を終了: %s", rnd, e)
+            result.rounds[-1]["revise_failed"] = str(e)
+            break
+        revised = normalize(res.content)
+        if len(split_sections(revised)) < len(split_sections(summary)):
+            log.warning("修正版で見出しが減ったため採用しません (round %d)", rnd)
+            result.rounds[-1]["revise_rejected"] = "見出しが減少"
+            break
+        summary = revised
 
     if not result.converged:
         remaining = format_issues(summary, limit)

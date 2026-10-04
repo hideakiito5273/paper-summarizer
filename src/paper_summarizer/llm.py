@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import re
@@ -49,6 +50,7 @@ class OllamaClient:
         self.db = db
         self.run_id = run_id
         self.paper_id: int | None = None  # ログ記録用に呼び出し側が設定する
+        self.cache_dir: Path | None = None  # 設定すると応答をキャッシュする (論文ごとの作業ディレクトリ)
 
     # ------------------------------------------------------------------
     def check(self, models: list[str]) -> None:
@@ -89,6 +91,11 @@ class OllamaClient:
             },
         }
 
+        cached = self._cache_get(body)
+        if cached is not None:
+            log.info("LLM stage=%s キャッシュを再利用", stage)
+            return cached
+
         retries = int(self.cfg.get("request_retries", 2))
         last_err: Exception | None = None
         for attempt in range(retries + 1):
@@ -107,21 +114,52 @@ class OllamaClient:
                 self._record(stage, model, None, None, time.monotonic() - t0, ok=False)
                 log.warning("LLM 生成エラー stage=%s attempt=%d/%d: %s", stage, attempt + 1, retries + 1, e)
                 continue
-            self._record(stage, model, res.prompt_tokens, res.eval_tokens, res.duration_s, ok=True)
             log.info(
                 "LLM stage=%s model=%s prompt_tok=%s eval_tok=%s %.1fs done=%s",
                 stage, model, res.prompt_tokens, res.eval_tokens, res.duration_s, res.done_reason,
             )
             if res.prompt_tokens and res.prompt_tokens >= num_ctx - 16:
+                self._record(stage, model, res.prompt_tokens, res.eval_tokens, res.duration_s, ok=False)
                 raise ContextOverflow(
                     f"入力 ({res.prompt_tokens} tok) が num_ctx={num_ctx} を超え切り詰められた可能性 (stage={stage})"
                 )
             if res.done_reason == "length":
                 log.warning("出力が num_predict 上限で打ち切られました stage=%s", stage)
             if not res.content.strip():
-                raise LLMError(f"空の応答 (stage={stage})")
+                # thinking だけで終わり本文が空になることがある → サンプリングし直す
+                last_err = LLMError(f"空の応答 (stage={stage})")
+                self._record(stage, model, res.prompt_tokens, res.eval_tokens, res.duration_s, ok=False)
+                log.warning("空の応答 stage=%s attempt=%d/%d (thinking %d 文字, 末尾: %r)", stage, attempt + 1,
+                            retries + 1, len(res.thinking), res.thinking[-300:])
+                continue
+            self._record(stage, model, res.prompt_tokens, res.eval_tokens, res.duration_s, ok=True)
+            self._cache_put(body, res)
             return res
         raise LLMError(f"LLM 呼び出しが {retries + 1} 回失敗 (stage={stage}): {last_err!r}")
+
+    # ---- 応答キャッシュ (論文ごと。再試行時に成功済みの段階を再利用する) -------------
+    def _cache_key(self, body: dict) -> str:
+        key = {k: body[k] for k in ("model", "messages", "think")}
+        key["options"] = body["options"]
+        return hashlib.sha256(json.dumps(key, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+    def _cache_get(self, body: dict) -> LLMResult | None:
+        if self.cache_dir is None:
+            return None
+        p = self.cache_dir / f"{self._cache_key(body)}.json"
+        if not p.exists():
+            return None
+        try:
+            return LLMResult(**json.loads(p.read_text(encoding="utf-8")))
+        except (OSError, ValueError, TypeError):
+            return None
+
+    def _cache_put(self, body: dict, res: LLMResult) -> None:
+        if self.cache_dir is None:
+            return
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        p = self.cache_dir / f"{self._cache_key(body)}.json"
+        p.write_text(json.dumps(res.__dict__, ensure_ascii=False), encoding="utf-8")
 
     def chat_json(self, prompt: str, *, stage: str, **kw) -> dict:
         """JSON 応答を得る。Ollama の format=json は生成が大幅に遅くなるため使わず、
