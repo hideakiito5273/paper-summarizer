@@ -14,8 +14,8 @@ max_attempts = 3                          # これを超えて失敗したら fa
 
 [ollama]
 url = "http://127.0.0.1:11434"
-model = "qwen3.8:27b-q8_0"                # 本文要約・検証用
-vision_model = "qwen3.8:27b-q8_0"         # 図・数式画像の読み取り用 (同一モデルで可)
+model = "qwen3.8:27b-mtp-q8_0"            # 本文要約・検証用 (MTP: 同じ重みで生成が約 3 倍速い)
+vision_model = "qwen3.8:27b-mtp-q8_0"     # 図・数式画像の読み取り用 (同一モデルで可)
 num_ctx = 65536
 temperature = 0.6                         # thinking モード推奨値 (低すぎると推論がループしやすい)
 num_predict = 32768                       # 1 応答の最大生成トークン (thinking 含む)

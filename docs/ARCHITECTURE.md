@@ -3,7 +3,7 @@
 DGX Spark 上のローカル LLM で論文 PDF を自動要約するシステムの設計文書。
 対象読者: 本システムを運用・改修する研究室メンバー。
 
-- 最終更新: 2026-10-05 (コミット `09c1a54` 時点、main ブランチ)
+- 最終更新: 2026-10-05 (phase-a 統合後)
 - リポジトリ: `~/paper-summarizer`
 
 ---
@@ -76,7 +76,7 @@ flowchart LR
 | ハードウェア | NVIDIA DGX Spark (GB10, 統合メモリ 128GB, aarch64) |
 | OS / CUDA | Linux 6.17 (nvidia), CUDA 13.0 |
 | LLM ランタイム | Ollama 0.35.1 (systemd サービス、モデル格納先 `/models/ollama`) |
-| LLM | `qwen3.8:27b-q8_0` — 27.3B dense、Q8_0 (約 30GB)、256K コンテキスト、vision・thinking 対応 |
+| LLM | `qwen3.8:27b-mtp-q8_0` — 27.3B dense、Q8_0 (約 30GB)、256K コンテキスト、vision・thinking 対応。MTP (multi-token prediction) により `qwen3.8:27b-q8_0` と同じ重みで生成が約 3 倍速い |
 | PDF 抽出 | Docling 2.132 + PyTorch 2.14 (cu130)、GPU 実行 |
 | アプリ | Python 3.12 venv (`~/paper-summarizer/.venv`)、依存は `docling`・`httpx` のみ |
 | 共有 | Syncthing 1.27 (`syncthing@ito` サービス) |
@@ -283,7 +283,9 @@ WAL モード、自動コミット。`run_id` (`YYYYMMDD-HHMMSS-xxxx`) はログ
 | 機能 | 内容 |
 |---|---|
 | ストリーミング受信 | `/api/chat` を `stream: true` で呼ぶ。タイムアウトは「トークンが途切れた時間」(`idle_timeout_seconds` = 900 秒) で判定し、全体の処理時間には上限を設けない |
-| thinking | `think: true`。推論部分は本文から分離され、要約には含まれない |
+| thinking | 段階ごとに深さを設定 (`[ollama.think_levels]`)。図・数式・書誌・短縮は無効、読書メモ・修正は low、統合・照合・レビューは medium。推論部分は本文から分離され、要約には含まれない |
+| 並列実行 | 図・数式・読書メモは `ollama.parallel` 本まで同時に投げる (Ollama の `OLLAMA_NUM_PARALLEL` 以下にする) |
+| 時間内訳 | Ollama の応答からモデル読み込み・入力処理・生成の時間を取り、`llm_calls` に記録する |
 | 再試行 | 接続エラー・HTTP エラー・生成中エラー (token repeat limit 等)・空応答を、最大 `request_retries + 1` = 3 回まで再サンプリング |
 | コンテキスト超過検知 | Ollama は `num_ctx` を超えた入力を黙って切り詰めるため、`prompt_eval_count ≥ num_ctx − 16` で `ContextOverflow` を送出 |
 | JSON 応答 | Ollama の `format: json` は生成が大幅に遅くなる (照合 1 回が 219 秒 → 指定なしで 75 秒) ため使わず、プロンプト指示 + パース (失敗時 1 回再生成) |
@@ -391,6 +393,18 @@ setsid nohup env HF_HUB_OFFLINE=1 .venv/bin/paper-summarizer run \
 
 ## 13. 性能 (実測)
 
+### 13.1 phase-a 適用後 (2026-10-05)
+
+Biometrika 2000 (13 頁) での比較:
+
+| 構成 | 抽出 | 要約 + 検証 | 合計 | 生成速度 |
+|---|---|---|---|---|
+| 適用前 (q8_0、thinking 一律) | 約 12 分 | 約 58 分 | 69.9 分 | 8.3 tok/s |
+| 段階別 thinking | 11.8 分 | 38.6 分 | 50.4 分 | 8.3 tok/s |
+| 段階別 thinking + MTP + 短縮工程 | 4.8 分 | 25.1 分 | **29.9 分** | 21〜28 tok/s |
+
+### 13.2 適用前 (q8_0、thinking 一律)
+
 `qwen3.8:27b-q8_0`、生成速度は約 8〜9 トークン/秒 (27B dense をメモリ帯域 273GB/s で動かす際の上限付近)。
 
 | 論文 | 本文 | 図 / 数式 | 抽出 (Docling + VLM) | 要約 + 検証 | 合計 |
@@ -413,6 +427,7 @@ setsid nohup env HF_HUB_OFFLINE=1 .venv/bin/paper-summarizer run \
 | 要約用と VLM を同一モデル | Qwen3.8 は vision 対応。モデル切り替えによるロード時間とメモリを節約 |
 | 全数式を VLM で読み直す | Docling の数式認識は誤読しても空にならず、崩れた LaTeX を出力するため失敗検知ができない |
 | 照合は可能な限り全文で | 分割照合では、他パートに根拠がある正しい記述を「誤り」と判定し、修正で削ってしまう現象が実測で発生 |
+| 短縮工程は thinking なし | thinking を有効にすると文字数を「+1+1+1…」と数え続けるループに陥り、1 回 8,800 トークンを消費した |
 | `format: json` を使わない | Ollama の制約付き生成で照合段階が大幅に遅くなった (qwen3:30b での試験時、1 回 219 秒。指定なしでは 75 秒) |
 | 修正プロンプトに基本プロンプトを含めない | 「論文全体を読み込み」の指示があるのに本文がない状態で、thinking だけで終わり本文が空になる現象が 3 本中 2 本で発生。対策後は修正 4 回すべて成功 |
 | 照合失敗を「指摘なし」と扱わない | 照合応答の JSON が読めなかったとき指摘 0 件 = 収束と誤判定し、未検証の要約が「指摘なし」と表示された。現在は未検証として記録・表示する |
@@ -426,10 +441,10 @@ setsid nohup env HF_HUB_OFFLINE=1 .venv/bin/paper-summarizer run \
 
 | 項目 | 内容 |
 |---|---|
-| 処理速度 | 1 本 1〜2.5 時間。phase-a ブランチで段階別 thinking・短縮工程・並列化を実装し、MTP 版と合わせて計測中 |
+| 処理速度 | phase-a 適用で 13 頁の論文が 69.9 分 → 29.9 分。並列実行 (OLLAMA_NUM_PARALLEL) の効果は計測予定 |
 | 最終修正後の再照合なし | 検証ラウンド上限に達した場合、最後の修正版は照合されない |
 | 文字数超過 | 統合段階では 500 字上限が守られにくく (実測 747〜1741 字)、検証の 1 ラウンド目が文字数修正に使われる |
-| 発行年の欠落 | Docling が欄外 (例: `Biometrika (2000), 87, 1`) を除去するため年・誌名が取れないことがある (Kennedy 2000 で発生)。PDF 1 ページ目の生テキストを渡す修正を phase-a ブランチで実施済み |
+| 発行年の欠落 | Docling が欄外 (例: `Biometrika (2000), 87, 1`) を除去するため年・誌名が取れないことがあった。書誌抽出に PDF 1 ページ目の生テキストを渡して対策済み。arXiv プレプリント等で本当に年の記載がない場合は `XXXX` |
 | スキャン PDF | 既定は OCR 無効 (`extract.ocr = true` で対応) |
 | 研究室での共有 | 現在は個人用。複数人での利用時は Syncthing のデバイス追加、または Samba 共有の追加を検討 |
 | 学外アクセス | Syncthing のリレーは無効のため、学外からは VPN (Tailscale 等) 経由が前提 |
