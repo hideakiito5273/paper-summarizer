@@ -19,13 +19,26 @@ vision_model = "qwen3.8:27b-q8_0"         # 図・数式画像の読み取り用
 num_ctx = 65536
 temperature = 0.6                         # thinking モード推奨値 (低すぎると推論がループしやすい)
 num_predict = 32768                       # 1 応答の最大生成トークン (thinking 含む)
-think = true                              # 推論 (thinking) モードを使う
+think = "medium"                          # 既定の推論の深さ (false / low / medium / xhigh)
 keep_alive = "30m"
 # LLM 1 リクエストのタイムアウト。全体の処理時間には上限を設けない。
 # ストリーミングで受信し、トークンが途切れた時間 (idle) で判定する。
 idle_timeout_seconds = 900
 connect_timeout_seconds = 30
 request_retries = 2
+parallel = 1                              # 独立した呼び出し (図・数式・読書メモ) の同時実行数。OLLAMA_NUM_PARALLEL 以下にする
+
+# 段階ごとの推論の深さ。生成時間の大半は thinking のトークンなので、作業の難しさに合わせる
+[ollama.think_levels]
+figure = false                            # 図の読み取り
+formula = false                           # 数式の書き起こし
+metadata = false                          # 書誌情報の抽出
+notes = "low"                             # 読書メモ (抜き出し中心)
+merge = "medium"                          # 統合
+shorten = false                           # 文字数の短縮 (推論させると文字数を数え続けるループに陥る)
+verify = "medium"                         # 照合
+revise = "low"                            # 指摘に従った修正
+review = "medium"                         # プロジェクト横断レビュー
 
 [extract]
 # docling-tools models download で取得したモデル。これを使うことで実行時にネット接続しない

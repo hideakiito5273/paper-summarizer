@@ -164,12 +164,27 @@ def cmd_try(cfg: Config, db: DB, run_id: str, args) -> int:
     (out / "verification.json").write_text(
         json.dumps({"converged": result.converged, "rounds": result.rounds}, ensure_ascii=False, indent=2),
         encoding="utf-8")
-    stats = {"model": ollama_cfg["model"], "extract_min": round((t1 - t0) / 60, 1),
+    stats = {"model": ollama_cfg["model"], "parallel": llm.parallel,
+             "think_levels": ollama_cfg.get("think_levels", {}), "extract_min": round((t1 - t0) / 60, 1),
              "summarize_min": round((t2 - t1) / 60, 1), "chunks": result.n_chunks,
-             "figures": len(ext.figures), "verify_rounds": len(result.rounds), "converged": result.converged}
+             "figures": len(ext.figures), "verify_rounds": len(result.rounds), "converged": result.converged,
+             "issues_per_round": [len(r["issues"]) for r in result.rounds],
+             "stages": stage_stats(db, run_id)}
     (out / "stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(stats, ensure_ascii=False))
     return 0
+
+
+def stage_stats(db: DB, run_id: str) -> dict:
+    """段階ごとの呼び出し回数・トークン数・時間の内訳 (性能比較用)。"""
+    rows = db.conn.execute(
+        "SELECT CASE WHEN instr(stage, ':') > 0 THEN substr(stage, 1, instr(stage, ':') - 1) ELSE stage END AS s,"
+        " COUNT(*) AS calls, SUM(prompt_tokens) AS prompt_tok, SUM(eval_tokens) AS eval_tok,"
+        " ROUND(SUM(duration_s) / 60, 1) AS wall_min, ROUND(SUM(load_s), 1) AS load_s,"
+        " ROUND(SUM(prefill_s), 1) AS prefill_s, ROUND(SUM(decode_s), 1) AS decode_s,"
+        " ROUND(SUM(eval_tokens) / NULLIF(SUM(decode_s), 0), 1) AS decode_tok_s"
+        " FROM llm_calls WHERE run_id=? AND ok=1 GROUP BY s ORDER BY SUM(duration_s) DESC", (run_id,)).fetchall()
+    return {r["s"]: {k: r[k] for k in r.keys() if k != "s"} for r in rows}
 
 
 def cmd_test_mail(cfg: Config, db: DB, run_id: str, args) -> int:

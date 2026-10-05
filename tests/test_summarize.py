@@ -8,13 +8,16 @@ GOOD = "\n".join(f"## {t}\n- x" for t in [
 
 
 class FakeLLM:
-    def __init__(self, verify):
+    parallel = 1
+
+    def __init__(self, verify, merged=GOOD):
         self.verify = verify  # 照合の応答 (dict) または例外
+        self.merged = merged  # 統合段階の出力
         self.stages = []
 
     def chat(self, prompt, *, stage, **kw):
         self.stages.append(stage)
-        return LLMResult(GOOD, "", 1, 1, 0.1, "stop")
+        return LLMResult(self.merged if stage == "merge" else GOOD, "", 1, 1, 0.1, "stop")
 
     def chat_json(self, prompt, *, stage, **kw):
         self.stages.append(stage)
@@ -54,3 +57,27 @@ def test_parse_json_valid_escape_latex_not_corrupted():
     # \f は JSON では改ページだが、LaTeX の \frac として保持されること
     assert parse_json(r'{"fix": "\frac{1}{2}"}')["fix"] == r"\frac{1}{2}"
     assert parse_json('{"fix": "a \\"q\\" b"}')["fix"] == 'a "q" b'
+
+
+def test_shorten_runs_only_when_over_limit():
+    llm = FakeLLM({"issues": []})
+    summarize(_ext(), "T", llm, {"verify_rounds": 3})
+    assert not any(st.startswith("shorten") for st in llm.stages)
+
+    long = GOOD.replace("- x", "- " + "あ" * 600, 1)
+    llm = FakeLLM({"issues": []}, merged=long)
+    res = summarize(_ext(), "T", llm, {"verify_rounds": 3})
+    assert "shorten:merge" in llm.stages
+    assert res.converged  # 短縮後は形式の指摘が出ない
+
+
+def test_run_parallel_keeps_order():
+    import time
+    from paper_summarizer.summarize_util import run_parallel
+
+    def task(i):
+        time.sleep(0.01 * (5 - i))
+        return i
+
+    assert run_parallel([lambda i=i: task(i) for i in range(5)], 3) == list(range(5))
+    assert run_parallel([lambda i=i: task(i) for i in range(5)], 1) == list(range(5))

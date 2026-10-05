@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -76,11 +77,20 @@ def now() -> str:
 
 class DB:
     def __init__(self, path: Path):
-        self.conn = sqlite3.connect(path, isolation_level=None, timeout=30)
+        # LLM 呼び出しを並列実行するため、複数スレッドから使う (書き込みは lock で直列化)
+        self.conn = sqlite3.connect(path, isolation_level=None, timeout=30, check_same_thread=False)
+        self.lock = threading.Lock()
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(llm_calls)")}
+        for col, typ in (("load_s", "REAL"), ("prefill_s", "REAL"), ("decode_s", "REAL"), ("think", "TEXT")):
+            if col not in cols:
+                self.conn.execute(f"ALTER TABLE llm_calls ADD COLUMN {col} {typ}")
 
     # ---- papers -------------------------------------------------------
     def get(self, paper_id: int) -> sqlite3.Row | None:
@@ -156,9 +166,13 @@ class DB:
         )
 
     def log_llm_call(self, *, run_id: str | None, paper_id: int | None, stage: str, model: str,
-                     prompt_tokens: int | None, eval_tokens: int | None, duration_s: float, ok: bool) -> None:
-        self.conn.execute(
-            "INSERT INTO llm_calls (run_id, paper_id, stage, model, prompt_tokens, eval_tokens, duration_s, ok,"
-            " created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-            (run_id, paper_id, stage, model, prompt_tokens, eval_tokens, duration_s, int(ok), now()),
-        )
+                     prompt_tokens: int | None, eval_tokens: int | None, duration_s: float, ok: bool,
+                     load_s: float | None = None, prefill_s: float | None = None, decode_s: float | None = None,
+                     think: str | None = None) -> None:
+        with self.lock:
+            self.conn.execute(
+                "INSERT INTO llm_calls (run_id, paper_id, stage, model, prompt_tokens, eval_tokens, duration_s, ok,"
+                " created_at, load_s, prefill_s, decode_s, think) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (run_id, paper_id, stage, model, prompt_tokens, eval_tokens, duration_s, int(ok), now(),
+                 load_s, prefill_s, decode_s, think),
+            )
