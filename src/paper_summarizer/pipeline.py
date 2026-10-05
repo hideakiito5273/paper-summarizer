@@ -219,7 +219,7 @@ def _process_one(cfg: Config, db: DB, llm: OllamaClient, extractor: Extractor, r
     if len(ext.markdown.strip()) < 500:
         raise ValueError("本文をほとんど抽出できませんでした (スキャン PDF の場合は extract.ocr = true)")
 
-    meta = llm.chat_json(prompts.render("metadata", head=ext.head), stage="metadata", think=False)
+    meta = llm.chat_json(prompts.render("metadata", head=ext.head), stage="metadata")
     meta = {k: meta.get(k) for k in ("title", "authors", "year", "venue", "doi", "short_title")}
     if not isinstance(meta.get("authors"), list):
         meta["authors"] = [meta["authors"]] if meta.get("authors") else []

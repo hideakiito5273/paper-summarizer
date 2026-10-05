@@ -41,6 +41,9 @@ class LLMResult:
     eval_tokens: int | None
     duration_s: float
     done_reason: str | None
+    load_s: float | None = None      # モデル読み込み (num_ctx 変更などで再ロードが起きると大きくなる)
+    prefill_s: float | None = None   # 入力の処理
+    decode_s: float | None = None    # 生成
 
 
 class OllamaClient:
@@ -51,6 +54,7 @@ class OllamaClient:
         self.run_id = run_id
         self.paper_id: int | None = None  # ログ記録用に呼び出し側が設定する
         self.cache_dir: Path | None = None  # 設定すると応答をキャッシュする (論文ごとの作業ディレクトリ)
+        self.parallel = max(1, int(cfg.get("parallel", 1)))
 
     # ------------------------------------------------------------------
     def check(self, models: list[str]) -> None:
@@ -83,7 +87,7 @@ class OllamaClient:
             "messages": messages,
             "stream": True,
             "keep_alive": self.cfg.get("keep_alive", "30m"),
-            "think": self.cfg.get("think", True) if think is None else think,
+            "think": self.think_for(stage) if think is None else think,
             "options": {
                 "num_ctx": num_ctx,
                 "temperature": float(self.cfg.get("temperature", 0.3)),
@@ -115,8 +119,9 @@ class OllamaClient:
                 log.warning("LLM 生成エラー stage=%s attempt=%d/%d: %s", stage, attempt + 1, retries + 1, e)
                 continue
             log.info(
-                "LLM stage=%s model=%s prompt_tok=%s eval_tok=%s %.1fs done=%s",
-                stage, model, res.prompt_tokens, res.eval_tokens, res.duration_s, res.done_reason,
+                "LLM stage=%s model=%s think=%s prompt_tok=%s eval_tok=%s %.1fs (load %s / prefill %s / decode %s) done=%s",
+                stage, model, body["think"], res.prompt_tokens, res.eval_tokens, res.duration_s,
+                res.load_s, res.prefill_s, res.decode_s, res.done_reason,
             )
             if res.prompt_tokens and res.prompt_tokens >= num_ctx - 16:
                 self._record(stage, model, res.prompt_tokens, res.eval_tokens, res.duration_s, ok=False)
@@ -132,7 +137,8 @@ class OllamaClient:
                 log.warning("空の応答 stage=%s attempt=%d/%d (thinking %d 文字, 末尾: %r)", stage, attempt + 1,
                             retries + 1, len(res.thinking), res.thinking[-300:])
                 continue
-            self._record(stage, model, res.prompt_tokens, res.eval_tokens, res.duration_s, ok=True)
+            self._record(stage, model, res.prompt_tokens, res.eval_tokens, res.duration_s, ok=True, res=res,
+                         think=body["think"])
             self._cache_put(body, res)
             return res
         raise LLMError(f"LLM 呼び出しが {retries + 1} 回失敗 (stage={stage}): {last_err!r}")
@@ -160,6 +166,11 @@ class OllamaClient:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         p = self.cache_dir / f"{self._cache_key(body)}.json"
         p.write_text(json.dumps(res.__dict__, ensure_ascii=False), encoding="utf-8")
+
+    def think_for(self, stage: str):
+        """段階名 (notes:1/6 → notes) に対応する推論の深さ。[ollama.think_levels] になければ既定値。"""
+        levels = self.cfg.get("think_levels", {})
+        return levels.get(stage.split(":")[0], self.cfg.get("think", True))
 
     def chat_json(self, prompt: str, *, stage: str, **kw) -> dict:
         """JSON 応答を得る。Ollama の format=json は生成が大幅に遅くなるため使わず、
@@ -210,12 +221,23 @@ class OllamaClient:
             eval_tokens=final.get("eval_count"),
             duration_s=time.monotonic() - t0,
             done_reason=final.get("done_reason"),
+            load_s=_ns(final.get("load_duration")),
+            prefill_s=_ns(final.get("prompt_eval_duration")),
+            decode_s=_ns(final.get("eval_duration")),
         )
 
-    def _record(self, stage, model, prompt_tokens, eval_tokens, dur, ok) -> None:
+    def _record(self, stage, model, prompt_tokens, eval_tokens, dur, ok, res: LLMResult | None = None,
+                think=None) -> None:
         if self.db is not None:
             self.db.log_llm_call(run_id=self.run_id, paper_id=self.paper_id, stage=stage, model=model,
-                                 prompt_tokens=prompt_tokens, eval_tokens=eval_tokens, duration_s=dur, ok=ok)
+                                 prompt_tokens=prompt_tokens, eval_tokens=eval_tokens, duration_s=dur, ok=ok,
+                                 load_s=res.load_s if res else None, prefill_s=res.prefill_s if res else None,
+                                 decode_s=res.decode_s if res else None,
+                                 think=None if think is None else str(think))
+
+
+def _ns(v) -> float | None:
+    return round(v / 1e9, 2) if v is not None else None
 
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.S)

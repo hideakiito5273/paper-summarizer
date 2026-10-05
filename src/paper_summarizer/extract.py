@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .llm import LLMError, OllamaClient, OllamaUnavailable
 from .prompts import render
+from .summarize_util import run_parallel
 
 log = logging.getLogger(__name__)
 
@@ -99,7 +100,8 @@ class Extractor:
         # 数式: "all" は全数式を VLM で読み直す (Docling は誤読しても空にならないため)。
         #       "fallback" は Docling がデコードできなかったものだけ。
         mode = self.cfg.get("formula_vlm", "all")
-        n_vlm = 0
+        parallel = llm.parallel if llm is not None else 1
+        jobs: list[tuple] = []  # (item, 画像パス)
         for j, item in enumerate(formulas):
             if llm is None or mode == "off" or (mode == "fallback" and (item.text or "").strip()):
                 continue
@@ -108,15 +110,22 @@ class Extractor:
                 continue
             p = fig_dir / f"formula_{j:03d}.png"
             img.save(p)
+            jobs.append((j, item, p))
+
+        def read_formula(j: int, item, p: Path) -> str | None:
             try:
                 res = llm.chat(render("formula", docling=item.text or "(なし)"), stage="formula",
-                               model=vision_model, images=[p], think=False)
+                               model=vision_model, images=[p])
             except OllamaUnavailable:
                 raise
             except LLMError as e:  # 1 つの数式の失敗で論文全体を落とさない (Docling の結果を使う)
                 log.warning("数式 %d の VLM 読み取りに失敗、Docling の結果を使用: %s", j, e)
-                continue
-            latex = _clean_latex(res.content)
+                return None
+            return _clean_latex(res.content)
+
+        latexes = run_parallel([lambda a=a: read_formula(*a) for a in jobs], parallel)
+        n_vlm = 0
+        for (_j, item, _p), latex in zip(jobs, latexes):
             if latex and latex != "判読不可":
                 item.text = latex
                 n_vlm += 1
@@ -134,22 +143,23 @@ class Extractor:
 
         describe = self.cfg.get("describe_figures", True) and llm is not None
         max_figs = int(self.cfg.get("max_figures", 40))
-        for fig in figures:
-            if not describe or fig.index >= max_figs or not fig.path.is_file():
-                continue
+
+        def describe_figure(fig: Figure) -> str:
             if _too_small(fig.path):
-                fig.description = "(小さな画像のため省略)"
-                continue
+                return "(小さな画像のため省略)"
             try:
                 res = llm.chat(render("figure", caption=fig.caption or "(なし)"), stage="figure",
-                               model=vision_model, images=[fig.path], think=False)
+                               model=vision_model, images=[fig.path])
             except OllamaUnavailable:
                 raise
             except LLMError as e:
                 log.warning("図 %d の VLM 読み取りに失敗、キャプションのみ使用: %s", fig.index + 1, e)
-                fig.description = "(読み取り失敗)"
-                continue
-            fig.description = res.content.strip()
+                return "(読み取り失敗)"
+            return res.content.strip()
+
+        targets = [f for f in figures if describe and f.index < max_figs and f.path.is_file()]
+        for fig, desc in zip(targets, run_parallel([lambda f=f: describe_figure(f) for f in targets], parallel)):
+            fig.description = desc
 
         markdown = _replace_in_order(markdown, FIG_MARK, [_figure_block(f) for f in figures])
 

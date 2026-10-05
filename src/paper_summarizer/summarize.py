@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from .extract import Extracted, split_chunks
 from .llm import LLMError, OllamaClient
 from .prompts import load, render
+from .summarize_util import run_parallel
 
 log = logging.getLogger(__name__)
 
@@ -42,16 +43,17 @@ def summarize(ext: Extracted, title: str, llm: OllamaClient, cfg: dict) -> Summa
     log.info("分割: %d チャンク (最大 %d 文字)", total, chunk_chars)
 
     # 1) 読書メモ (map)
-    notes = []
-    for i, chunk in enumerate(chunks, 1):
+    def note(i: int, chunk: str) -> str:
         res = llm.chat(render("chunk_notes", part=i, total=total, outline=ext.outline, chunk=chunk),
                        stage=f"notes:{i}/{total}")
-        notes.append(f"### パート {i}/{total}\n{res.content.strip()}")
+        return f"### パート {i}/{total}\n{res.content.strip()}"
+
+    notes = run_parallel([lambda i=i, c=c: note(i, c) for i, c in enumerate(chunks, 1)], llm.parallel)
 
     # 2) 統合 (reduce)
     res = llm.chat(render("merge", base_prompt=base_prompt, title=title, abstract=ext.abstract,
                           notes="\n\n".join(notes), format=fmt), stage="merge")
-    summary = normalize(res.content)
+    summary = shorten_if_needed(normalize(res.content), llm, limit, fmt, stage="shorten:merge")
 
     # 3) 自己検証ループ
     #    全文が収まる場合は全文と照合する (分割照合は他パートの情報を「誤り」と誤判定しやすい)。
@@ -112,7 +114,7 @@ def summarize(ext: Extracted, title: str, llm: OllamaClient, cfg: dict) -> Summa
             log.warning("修正版で見出しが減ったため採用しません (round %d)", rnd)
             result.rounds[-1]["revise_rejected"] = "見出しが減少"
             break
-        summary = revised
+        summary = shorten_if_needed(revised, llm, limit, fmt, stage=f"shorten:r{rnd}")
 
     if not result.converged:
         remaining = format_issues(summary, limit)
@@ -125,6 +127,27 @@ def summarize(ext: Extracted, title: str, llm: OllamaClient, cfg: dict) -> Summa
 
 
 # ---------------------------------------------------------------------------
+def shorten_if_needed(summary: str, llm: OllamaClient, limit: int, fmt: str, *, stage: str) -> str:
+    """文字数超過の項目だけを推論の浅い専用工程で短くする (照合を内容の確認に集中させるため)。"""
+    sections = split_sections(summary)
+    over = {n: body_chars(b) for n, b in sections.items() if body_chars(b) > limit}
+    if not over:
+        return summary
+    targets = "\n".join(f"- 項目 {n} ({SECTION_TITLES[n - 1]}): 現在 {c} 文字" for n, c in sorted(over.items()))
+    log.info("短縮: %s", ", ".join(f"項目{n}={c}字" for n, c in sorted(over.items())))
+    try:
+        res = llm.chat(render("shorten", section_char_limit=limit, targets=targets, summary=summary, format=fmt),
+                       stage=stage)
+    except LLMError as e:
+        log.warning("短縮に失敗、元の要約のまま照合に進みます: %s", e)
+        return summary
+    shortened = normalize(res.content)
+    if len(split_sections(shortened)) < len(sections):
+        log.warning("短縮版で見出しが減ったため採用しません")
+        return summary
+    return shortened
+
+
 def normalize(text: str) -> str:
     """前置きやコードフェンスを除去し、最初の見出しから始まるようにする。"""
     text = re.sub(r"^```(?:markdown)?\s*|\s*```$", "", text.strip())
