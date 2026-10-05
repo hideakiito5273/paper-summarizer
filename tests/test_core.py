@@ -13,20 +13,25 @@ from paper_summarizer.pipeline import RunReport, project_of, scan
 from paper_summarizer.prompts import render
 from paper_summarizer.summarize import body_chars, format_issues, normalize, split_sections
 
-GOOD = """## 1. どんなもの？
-- A
-  - B
+GOOD = """## 論旨の流れ
+- 問題: 問題がある。 [§1-p1]
+- 手法: 手法を使う。 [§2-p1]
+- 結果: 結果が出た。 [§3-p1]
+## 1. どんなもの？
+- A である。 [§1-p1]
+  - B である。 [§1-p2]
 ## 2. 先行研究を比べてどこがすごい？
-- C
+- C である。 [§1-p1]
 ## 3. 技術や手法の肝はどこ？
-- D
+- D である。 [§2-p1]
 ## 4. どうやって有効だと検証した？
-- E
+- E である。 [§3-p1]
 ## 5. 議論はある？
-- F
+- F である。 [§3-p1]
 ## 6. 次に読むべき論文は？
-- G
+- G (2000) 「H」: I をした。 [§1-p2]
 """
+IDS = {"§1-p1", "§1-p2", "§2-p1", "§3-p1"}
 
 
 def test_split_chunks_respects_limit():
@@ -42,17 +47,30 @@ def test_split_chunks_long_paragraph():
 
 
 def test_format_ok_and_limits():
-    assert format_issues(GOOD, 500) == []
-    long = GOOD.replace("- A", "- " + "あ" * 501)
-    issues = format_issues(long, 500)
+    assert format_issues(GOOD, 500, IDS) == []
+    long = GOOD.replace("- A である。", "- " + "あ" * 501)
+    issues = format_issues(long, 500, IDS)
     assert len(issues) == 1 and issues[0]["section"] == 1
     missing = GOOD.split("## 6.")[0]
-    assert any(i["section"] == 6 for i in format_issues(missing, 500))
+    assert any(i["section"] == 6 for i in format_issues(missing, 500, IDS))
+
+
+def test_citations_not_counted_and_checked():
+    assert body_chars("- ab [§1-p1, §2-p3]\n  - cd [§1-p2]") == 4
+    no_cite = GOOD.replace("- C である。 [§1-p1]", "- C である。")
+    assert any(i["type"] == "根拠不備" and i["section"] == 2 for i in format_issues(no_cite, 500, IDS))
+    bad_id = GOOD.replace("[§2-p1]", "[§9-p9]")
+    assert any("存在しない段落 ID" in i["fix"] for i in format_issues(bad_id, 500, IDS))
+
+
+def test_flow_required():
+    no_flow = GOOD[GOOD.index("## 1."):]
+    assert any(i["section"] == "流れ" for i in format_issues(no_flow, 500, IDS))
 
 
 def test_normalize_strips_preamble():
     out = normalize("はい、要約です。\n```markdown\n" + GOOD + "```")
-    assert out.startswith("## 1.") and len(split_sections(out)) == 6
+    assert out.startswith("## 論旨の流れ") and len(split_sections(out)) == 7
 
 
 def test_body_chars_ignores_bullets():

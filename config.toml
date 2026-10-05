@@ -52,11 +52,11 @@ describe_figures = true                   # 図を VLM で読み取って本文�
 max_figures = 40
 
 [summarize]
-chunk_chars = 24000                       # 分割要約 1 チャンクの最大文字数
-section_char_limit = 500                  # 各項目の文字数上限 (プロンプトと一致させる)
+section_char_limit = 1000                 # 各項目の文字数上限 (根拠表示を除く。プロンプトと一致させる)
+read_chars = 12000                        # 精読 1 回で読む本文の最大文字数 (節をまとめる / 長い節は分割)
+references_chars = 15000                  # 統合時に渡す参考文献リストの最大文字数
 verify_rounds = 3                         # 自己検証 → 修正 のループ回数上限
-verify_full_max_chars = 200000            # これ以下の論文は全文と一括照合 (超える場合は分割照合)
-verify_num_ctx = 131072                   # 照合時のコンテキスト長
+verify_num_ctx = 65536                    # 照合時のコンテキスト長 (根拠段落のみ渡すため通常と同じでよい)
 language = "ja"
 review_num_ctx = 131072                   # プロジェクトレビュー時のコンテキスト長
 review_max_input_chars = 60000            # これを超える場合は分割して部分レビュー → 統合

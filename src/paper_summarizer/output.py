@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .db import DB
-from .summarize import split_sections
+from .summarize import FLOW, cited_ids, split_sections, strip_citations
 
 log = logging.getLogger(__name__)
 
@@ -101,15 +101,43 @@ def write_outputs(out_dir: Path, pdf: Path, meta: dict, summary_md: str, verific
     shutil.move(str(pdf), out_dir / "paper.pdf")
 
 
+def write_reading_outputs(out_dir: Path, title: str, ext, result) -> None:
+    """節ごとの要約 (sections.md) と根拠段落の原文 (evidence.md / evidence.json) を書き出す。"""
+    rd = result.readings
+    lines = [f"# 節ごとの要約: {title}", "",
+             "段落 ID は summary.md の根拠表示と対応する。原文は evidence.json / extracted.md を参照。", ""]
+    for sec in ext.sections:
+        info = rd.sections.get(sec.id)
+        if info is None:
+            continue
+        lines += [f"## §{sec.id} {sec.title} 〔{info.get('role', '?')}〕", "", info.get("summary", ""), ""]
+        lines += [f"- [{p.id}] {rd.notes[p.id]}" for p in sec.paragraphs if p.id in rd.notes]
+        lines.append("")
+    (out_dir / "sections.md").write_text("\n".join(lines), encoding="utf-8")
+
+    index = {p.id: {"section": sec.id, "section_title": sec.title, "kind": p.kind, "text": p.text}
+             for sec in ext.sections for p in sec.paragraphs}
+    (out_dir / "evidence.json").write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+    ev = [f"# 根拠段落: {title}", "", "summary.md で引用された段落の原文 (引用順)。", ""]
+    for pid in cited_ids(result.markdown):
+        if pid in index:
+            body = "\n".join("> " + ln for ln in index[pid]["text"].splitlines())
+            ev += [f"### [{pid}] §{index[pid]['section']} {index[pid]['section_title']}", "", body, ""]
+    (out_dir / "evidence.md").write_text("\n".join(ev), encoding="utf-8")
+
+
 def first_point(summary_path: Path, max_len: int = 90) -> str:
+    """一覧表用の要旨: 論旨の流れの「問題」行 (なければ項目 1 の冒頭)。"""
     try:
         sections = split_sections(summary_path.read_text(encoding="utf-8"))
     except OSError:
         return ""
-    for line in sections.get(1, "").splitlines():
-        text = re.sub(r"^\s*[-*+]\s*", "", line).strip()
-        if text:
-            return text if len(text) <= max_len else text[: max_len - 1] + "…"
+    for key in (FLOW, 1):
+        for line in sections.get(key, "").splitlines():
+            text = strip_citations(re.sub(r"^\s*[-*+]\s*", "", line)).strip()
+            text = re.sub(r"^問題\s*[:：]\s*", "", text)
+            if text:
+                return text if len(text) <= max_len else text[: max_len - 1] + "…"
     return ""
 
 

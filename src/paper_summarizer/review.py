@@ -13,6 +13,7 @@ from .db import DB
 from .llm import OllamaClient
 from .output import update_project_readme
 from .prompts import render
+from .summarize import strip_citations
 
 log = logging.getLogger(__name__)
 
@@ -21,8 +22,9 @@ def _paper_block(row) -> str:
     authors = json.loads(row["authors"]) if row["authors"] else []
     head = f"### [{(authors[0] if authors else '不明')} {row['year'] or ''}] {row['title'] or row['source_name']}"
     text = (Path(row["output_dir"]) / "summary.md").read_text(encoding="utf-8")
-    m = re.search(r"(?m)^##\s*1\.", text)  # 書誌表を除いた本文のみ
-    return f"{head}\n{text[m.start():] if m else text}"
+    m = re.search(r"(?m)^##\s*(論旨の流れ|1\.)", text)  # 書誌表を除いた本文のみ
+    body = text[m.start():] if m else text
+    return f"{head}\n{strip_citations(body)}"  # 段落 ID は論文ごとの番号なので横断レビューでは除く
 
 
 def run_review(cfg: Config, db: DB, llm: OllamaClient, project: str) -> Path:

@@ -17,7 +17,8 @@ from .config import Config
 from .db import DB, now
 from .extract import Extractor
 from .llm import OllamaClient, OllamaUnavailable
-from .output import archive_previous, paper_dir_name, unique_dir, update_project_readme, write_outputs
+from .output import (archive_previous, paper_dir_name, unique_dir, update_project_readme, write_outputs,
+                     write_reading_outputs)
 from .summarize import summarize
 
 log = logging.getLogger(__name__)
@@ -263,12 +264,15 @@ def _process_one(cfg: Config, db: DB, llm: OllamaClient, extractor: Extractor, r
         vision_model=vision_model,
         prompt_version=prompts.version(),
         n_chunks=result.n_chunks,
+        n_sections=sum(1 for x in ext.sections if x.readable),
+        n_paragraphs=len(result.readings.notes),
         n_figures=len(ext.figures),
         verify_rounds=len(result.rounds),
         verify_converged=result.converged,
     )
     verification = {"converged": result.converged, "rounds": result.rounds}
     write_outputs(out_dir, pdf, meta, result.markdown, verification, work / "paper.md")
+    write_reading_outputs(out_dir, meta.get("title") or row["source_name"], ext, result)
     if (work / "figures").exists():
         shutil.copytree(work / "figures", out_dir / "figures", dirs_exist_ok=True)
     shutil.rmtree(work, ignore_errors=True)

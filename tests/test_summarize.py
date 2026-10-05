@@ -2,7 +2,11 @@ from paper_summarizer.extract import Extracted
 from paper_summarizer.llm import LLMError, LLMResult, parse_json
 from paper_summarizer.summarize import summarize
 
-GOOD = "\n".join(f"## {t}\n- x" for t in [
+GOOD = """## 論旨の流れ
+- 問題: 問題がある。 [§1-p1]
+- 手法: 手法を使う。 [§1-p1]
+- 結果: 結果が出た。 [§1-p1]
+""" + "\n".join(f"## {t}\n- x である。 [§1-p1]" for t in [
     "1. どんなもの？", "2. 先行研究を比べてどこがすごい？", "3. 技術や手法の肝はどこ？",
     "4. どうやって有効だと検証した？", "5. 議論はある？", "6. 次に読むべき論文は？"])
 
@@ -21,13 +25,17 @@ class FakeLLM:
 
     def chat_json(self, prompt, *, stage, **kw):
         self.stages.append(stage)
+        if stage.startswith("notes"):
+            return {"sections": [{"id": "1", "role": "手法", "summary": "要約。"}], "paragraphs": {"§1-p1": "要点。"}}
         if isinstance(self.verify, Exception):
             raise self.verify
         return self.verify
 
 
 def _ext():
-    return Extracted(markdown="## Abstract\ntext\n## Intro\nbody " * 10)
+    from paper_summarizer.structure import Paragraph, Section
+    sec = Section(id="1", title="1. Intro", number="1", paragraphs=[Paragraph("§1-p1", "text", "本文。")])
+    return Extracted(markdown="## 1. Intro\n本文。", sections=[sec])
 
 
 def test_verify_failure_is_not_converged():
@@ -64,7 +72,7 @@ def test_shorten_runs_only_when_over_limit():
     summarize(_ext(), "T", llm, {"verify_rounds": 3})
     assert not any(st.startswith("shorten") for st in llm.stages)
 
-    long = GOOD.replace("- x", "- " + "あ" * 600, 1)
+    long = GOOD.replace("## 1. どんなもの？\n- x", "## 1. どんなもの？\n- " + "あ" * 1100, 1)
     llm = FakeLLM({"issues": []}, merged=long)
     res = summarize(_ext(), "T", llm, {"verify_rounds": 3})
     assert "shorten:merge" in llm.stages

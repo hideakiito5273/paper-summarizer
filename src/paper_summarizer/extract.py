@@ -9,6 +9,8 @@ from pathlib import Path
 
 from .llm import LLMError, OllamaClient, OllamaUnavailable
 from .prompts import render
+from .structure import Section, build_sections, fix_text
+from .structure import outline as section_outline
 from .summarize_util import run_parallel
 
 log = logging.getLogger(__name__)
@@ -30,16 +32,28 @@ class Extracted:
     markdown: str
     figures: list[Figure] = field(default_factory=list)
     n_formulas_vlm: int = 0
+    sections: list[Section] = field(default_factory=list)
 
     @property
     def outline(self) -> str:
+        if self.sections:
+            return section_outline(self.sections)
         return "\n".join(line for line in self.markdown.splitlines() if line.startswith("#"))
 
     @property
     def abstract(self) -> str:
-        m = re.search(r"^#+\s*abstract\s*$(.*?)(?=^#)", self.markdown, re.I | re.M | re.S)
-        text = m.group(1) if m else self.markdown[:3000]
+        for sec in self.sections:
+            if sec.kind == "abstract":
+                # 受理日・キーワードなどの短い段落を除く
+                body = [p.text for p in sec.paragraphs if len(p.text) >= 200] or [p.text for p in sec.paragraphs]
+                return "\n".join(body)[:4000]
+        m = re.search(r"^#+\s*(abstract|summary)\s*$(.*?)(?=^#)", self.markdown, re.I | re.M | re.S)
+        text = m.group(2) if m else self.markdown[:3000]
         return text.strip()[:4000]
+
+    @property
+    def references(self) -> str:
+        return "\n".join(p.text for s in self.sections if s.kind == "references" for p in s.paragraphs)
 
     @property
     def head(self) -> str:
@@ -161,11 +175,14 @@ class Extractor:
         for fig, desc in zip(targets, run_parallel([lambda f=f: describe_figure(f) for f in targets], parallel)):
             fig.description = desc
 
-        markdown = _replace_in_order(markdown, FIG_MARK, [_figure_block(f) for f in figures])
+        markdown = fix_text(_replace_in_order(markdown, FIG_MARK, [_figure_block(f) for f in figures]))
+        sections = build_sections(doc, {id(pic): _figure_block(fig) for pic, fig in zip(pictures, figures)})
 
         (work_dir / "paper.md").write_text(markdown, encoding="utf-8")
-        log.info("抽出完了: %d 文字, 図 %d, VLM 数式 %d", len(markdown), len(figures), n_vlm)
-        return Extracted(markdown=markdown, figures=figures, n_formulas_vlm=n_vlm)
+        (work_dir / "outline.txt").write_text(section_outline(sections), encoding="utf-8")
+        log.info("抽出完了: %d 文字, 図 %d, VLM 数式 %d, 節 %d, 段落 %d", len(markdown), len(figures), n_vlm,
+                 len(sections), sum(len(x.paragraphs) for x in sections))
+        return Extracted(markdown=markdown, figures=figures, n_formulas_vlm=n_vlm, sections=sections)
 
 
 def _clean_latex(text: str) -> str:

@@ -147,6 +147,7 @@ def cmd_try(cfg: Config, db: DB, run_id: str, args) -> int:
     import time
 
     from .extract import Extractor
+    from .output import write_reading_outputs
     from .summarize import summarize
 
     ollama_cfg = dict(cfg.ollama)
@@ -161,6 +162,7 @@ def cmd_try(cfg: Config, db: DB, run_id: str, args) -> int:
     result = summarize(ext, Path(args.pdf).stem, llm, cfg.summarize)
     t2 = time.monotonic()
     (out / "summary.md").write_text(result.markdown, encoding="utf-8")
+    write_reading_outputs(out, Path(args.pdf).stem, ext, result)
     (out / "verification.json").write_text(
         json.dumps({"converged": result.converged, "rounds": result.rounds}, ensure_ascii=False, indent=2),
         encoding="utf-8")
