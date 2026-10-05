@@ -253,10 +253,11 @@ def parse_json(text: str) -> dict:
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
     m = re.search(r"\{.*\}", text, re.S)
-    candidates = [text] + ([m.group(0)] if m else [])
+    start = text.find("{")
+    candidates = [text] + ([m.group(0)] if m else []) + ([text[start:]] if start >= 0 else [])
     for cand in candidates:
         # LaTeX を含む応答では \frac の \f が正当なエスケープとして化けるため、文字どおり解釈を先に試す
-        for fix in (_escape_backslashes, lambda t: t):
+        for fix in (_escape_backslashes, lambda t: t, lambda t: _close_brackets(_escape_backslashes(t))):
             try:
                 data = json.loads(fix(cand))
             except json.JSONDecodeError:
@@ -267,5 +268,28 @@ def parse_json(text: str) -> dict:
 
 
 def _escape_backslashes(text: str) -> str:
-    """LaTeX (\\frac など) による不正な JSON エスケープを、文字どおりのバックスラッシュとして扱う。"""
-    return re.sub(r'\\(?!["\\/])', r"\\\\", text)
+    """LaTeX (\\frac, D_t \\\\ D, O\\'Hagan など) による不正な JSON エスケープを、文字どおりのバックスラッシュにする。
+    先頭から「\\ + 1 文字」の組として走査し、\\" \\\\ \\/ 以外はバックスラッシュを二重化する。"""
+    return re.sub(r"\\(.)", lambda m: m.group(0) if m.group(1) in '"\\/' else "\\\\" + m.group(1), text,
+                  flags=re.S)
+
+
+def _close_brackets(text: str) -> str:
+    """出力の末尾で閉じ忘れた引用符・括弧を補う (途中で打ち切られた JSON の救済)。"""
+    stack: list[str] = []
+    in_str = esc = False
+    for ch in text:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]" and stack and stack[-1] == ch:
+            stack.pop()
+    return text + ('"' if in_str else "") + "".join(reversed(stack))

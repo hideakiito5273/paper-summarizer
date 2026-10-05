@@ -89,3 +89,33 @@ def test_run_parallel_keeps_order():
 
     assert run_parallel([lambda i=i: task(i) for i in range(5)], 3) == list(range(5))
     assert run_parallel([lambda i=i: task(i) for i in range(5)], 1) == list(range(5))
+
+
+def test_parse_json_odd_backslash_runs():
+    d = parse_json(r'{"a": "D_t \\\ D_{t-1} と O\'Hagan と \"q\""}')
+    assert d["a"] == "D_t \\\\ D_{t-1} と O\\'Hagan と \"q\""
+
+
+def test_parse_reading_text_format():
+    from paper_summarizer.summarize import parse_reading
+    out = parse_reading("""[節 §5]
+役割: 理論
+要約: 累積粗さモデルを提案する。
+事後分布を導出する。
+[節 §6]
+役割: 考察
+要約: 適用範囲を論じる。
+[段落]
+§5-p1: D_t \\ D_{t-1} を用いる。
+§5-p2: O'Hagan (1996) の手法で "E(L)" を求める。
+  続きの行。
+- §6-p1: 広く適用できる。
+""")
+    assert [s["id"] for s in out["sections"]] == ["5", "6"]
+    assert out["sections"][0]["summary"] == "累積粗さモデルを提案する。 事後分布を導出する。"
+    assert out["paragraphs"]["§5-p2"].endswith("続きの行。")
+    assert set(out["paragraphs"]) == {"§5-p1", "§5-p2", "§6-p1"}
+
+
+def test_parse_json_missing_closing_brace():
+    assert parse_json('{"issues": [{"fix": "a"}]')["issues"][0]["fix"] == "a"

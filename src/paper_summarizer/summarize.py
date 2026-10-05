@@ -164,20 +164,27 @@ def read_sections(units: list[Unit], ext: Extracted, title: str, llm: OllamaClie
     for i, unit in enumerate(units, 1):
         previous = readings.section_summaries(ext.sections)[-3000:] or "(論文の冒頭)"
         expected = {p.id: p for _, paras, _ in unit.parts for p in paras}
-        try:
-            data = llm.chat_json(render("section_read", title=title, outline=ext.outline, previous=previous,
-                                        sections=unit.text()), stage=f"notes:{i}/{len(units)}")
-        except LLMError as e:
-            log.warning("精読 %d/%d に失敗、原文抜粋で代用: %s", i, len(units), e)
-            data = {}
-        notes = data.get("paragraphs") or {}
+        prompt = render("section_read", title=title, outline=ext.outline, previous=previous, sections=unit.text())
+        data: dict = {"sections": [], "paragraphs": {}}
+        for attempt in range(2):  # 段落の要点が 1 つも取れなければキャッシュを使わず再生成
+            try:
+                res = llm.chat(prompt, stage=f"notes:{i}/{len(units)}", use_cache=(attempt == 0))
+            except LLMError as e:
+                log.warning("精読 %d/%d に失敗: %s", i, len(units), e)
+                break
+            data = parse_reading(res.content)
+            if data["paragraphs"]:
+                break
+            log.warning("精読 %d/%d の出力を解釈できません (attempt %d) 先頭: %r", i, len(units), attempt + 1,
+                        res.content[:200])
+        notes = data["paragraphs"]
         for pid, p in expected.items():
             note = notes.get(pid)
             readings.notes[pid] = str(note).strip() if note else f"(原文抜粋) {p.text[:200]}"
         missing = [pid for pid in expected if not notes.get(pid)]
         if missing:
             log.warning("精読 %d/%d: 段落メモ欠落 %d/%d 件", i, len(units), len(missing), len(expected))
-        by_id = {str(s.get("id", "")).lstrip("§"): s for s in data.get("sections") or [] if isinstance(s, dict)}
+        by_id = {sec["id"]: sec for sec in data["sections"]}
         for sec, _paras, cont in unit.parts:
             got = by_id.get(sec.id, {})
             prev = readings.sections.get(sec.id)
@@ -188,6 +195,44 @@ def read_sections(units: list[Unit], ext: Extracted, title: str, llm: OllamaClie
                 readings.sections[sec.id] = {"title": sec.title, "role": got.get("role", "その他"),
                                              "summary": summary}
     return readings
+
+
+_SEC_TAG = re.compile(r"^\[節\s*§?\s*([^\]\s]+)\s*\]\s*$")
+_PARA_TAG = re.compile(r"^\[段落\]\s*$")
+_PARA_LINE = re.compile(r"^[-*\s]*\[?(§[\w.]+-p\d+)\]?\s*[:：]\s*(.*)$")
+_FIELD = re.compile(r"^(役割|要約)\s*[:：]\s*(.*)$")
+
+
+def parse_reading(text: str) -> dict:
+    """精読の出力 ([節 §x] / 役割: / 要約: / [段落] / §x-py: 要点) を解釈する。
+    JSON は LaTeX や引用符で壊れやすいため、行頭の目印で区切るテキスト形式にしている。"""
+    sections: list[dict] = []
+    paragraphs: dict[str, str] = {}
+    cur_sec: dict | None = None
+    cur_field: str | None = None
+    cur_pid: str | None = None
+    for raw in re.sub(r"^```\w*|```$", "", text.strip()).splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if m := _SEC_TAG.match(line):
+            cur_sec = {"id": m.group(1), "role": "その他", "summary": ""}
+            sections.append(cur_sec)
+            cur_field = cur_pid = None
+        elif _PARA_TAG.match(line):
+            cur_sec, cur_field, cur_pid = None, None, None
+        elif m := _PARA_LINE.match(line):
+            cur_pid = m.group(1)
+            paragraphs[cur_pid] = m.group(2).strip()
+            cur_field = None
+        elif cur_sec is not None and (m := _FIELD.match(line)):
+            cur_field = "role" if m.group(1) == "役割" else "summary"
+            cur_sec[cur_field] = m.group(2).strip()
+        elif cur_pid is not None:
+            paragraphs[cur_pid] += " " + line  # 段落の要点が複数行にわたる場合
+        elif cur_sec is not None and cur_field == "summary":
+            cur_sec["summary"] += " " + line
+    return {"sections": sections, "paragraphs": paragraphs}
 
 
 # ---- 3) 照合 ------------------------------------------------------------------
