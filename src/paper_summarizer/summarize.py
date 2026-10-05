@@ -69,6 +69,7 @@ def summarize(ext: Extracted, title: str, llm: OllamaClient, cfg: dict) -> Summa
     result = SummaryResult(markdown=summary, n_chunks=total)
     for rnd in range(1, max_rounds + 1):
         issues = format_issues(summary, limit)
+        failed_parts: list[int] = []
         for i, (note, label, text) in enumerate(targets, 1):
             try:
                 data = llm.chat_json(
@@ -76,16 +77,28 @@ def summarize(ext: Extracted, title: str, llm: OllamaClient, cfg: dict) -> Summa
                            section_char_limit=limit),
                     stage=f"verify:r{rnd}:{i}/{len(targets)}", num_ctx=verify_ctx)
             except LLMError as e:
-                log.warning("検証応答を解釈できませんでした (round %d part %d): %r", rnd, i, e)
+                log.warning("照合に失敗 (round %d part %d): %s", rnd, i, e)
+                failed_parts.append(i)
                 continue
             for it in data.get("issues", []) or []:
                 if isinstance(it, dict) and str(it.get("confidence", "high")).lower() != "low":
                     it["part"] = i
                     issues.append(it)
-        result.rounds.append({"round": rnd, "issues": issues})
-        log.info("検証 round %d: 指摘 %d 件", rnd, len(issues))
-        if not issues:
+        rec = {"round": rnd, "issues": issues}
+        if failed_parts:
+            rec["verify_failed_parts"] = failed_parts
+        result.rounds.append(rec)
+        log.info("検証 round %d: 指摘 %d 件%s", rnd, len(issues),
+                 f" (照合失敗 {len(failed_parts)}/{len(targets)} パート)" if failed_parts else "")
+        if len(failed_parts) == len(targets):
+            # 照合が 1 つも成功していない = 未検証。「指摘なし」と誤認しないよう収束扱いにしない
+            log.warning("照合がすべて失敗したため検証を打ち切ります (round %d)", rnd)
+            if not issues:
+                break
+        elif not issues and not failed_parts:
             result.converged = True
+            break
+        elif not issues:  # 一部パートのみ照合成功で指摘なし → 再照合しても同じ入力なので終了
             break
         try:
             res = llm.chat(render("revise", base_prompt=base_prompt, summary=summary,

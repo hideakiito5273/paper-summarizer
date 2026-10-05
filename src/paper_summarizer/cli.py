@@ -113,6 +113,28 @@ def cmd_retry(cfg: Config, db: DB, run_id: str, args) -> int:
     return 0
 
 
+def cmd_reprocess(cfg: Config, db: DB, run_id: str, args) -> int:
+    """処理済みの論文を再要約する (プロンプト・構成の変更後や検証失敗時)。旧版は _history/ に退避される。"""
+    row = db.get(args.id)
+    if row is None or row["status"] != "done":
+        print(f"#{args.id} は done ではありません", file=sys.stderr)
+        return 1
+    src = Path(row["output_dir"]) / "paper.pdf"
+    if not src.exists():
+        print(f"PDF が見つかりません: {src}", file=sys.stderr)
+        return 1
+    dest = cfg.paths.inbox / row["project"] / row["source_name"]
+    if dest.exists():
+        print(f"inbox に同名ファイルがあります: {dest}", file=sys.stderr)
+        return 1
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)  # 旧版は処理成功時に _history/ へ退避されるまで残す
+    pid = db.add(sha256=row["sha256"], project=row["project"], source_name=row["source_name"],
+                 inbox_path=str(dest), replaces=row["id"])
+    log.info("#%d を再処理対象に登録しました → #%d (%s)", row["id"], pid, dest)
+    return 0
+
+
 def cmd_readme(cfg: Config, db: DB, run_id: str, args) -> int:
     from .output import update_project_readme
 
@@ -180,6 +202,10 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("retry", help="failed の論文を再キュー")
     s.add_argument("id", type=int)
     s.set_defaults(func=cmd_retry)
+
+    s = sub.add_parser("reprocess", help="処理済みの論文を再要約 (旧版は _history/ に退避)")
+    s.add_argument("id", type=int)
+    s.set_defaults(func=cmd_reprocess)
 
     s = sub.add_parser("readme", help="プロジェクトの文献一覧 README を再生成")
     s.add_argument("project")

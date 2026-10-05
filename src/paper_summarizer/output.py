@@ -83,6 +83,8 @@ def verification_label(v: dict) -> str:
     if v.get("converged"):
         return f"{n} ラウンドで指摘なし"
     last = v["rounds"][-1] if v.get("rounds") else {"issues": []}
+    if last.get("verify_failed_parts"):
+        return f"{n} ラウンド目の照合に失敗 (パート {last['verify_failed_parts']} 未検証)"
     if last.get("revise_failed") or last.get("revise_rejected"):
         return f"{n} ラウンド実施 (最終ラウンドの指摘 {len(last['issues'])} 件は未修正)"
     return f"{n} ラウンド実施 (最終ラウンドの指摘 {len(last['issues'])} 件を修正済み・再照合なし)"

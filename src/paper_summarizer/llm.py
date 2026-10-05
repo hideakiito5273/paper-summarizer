@@ -67,7 +67,7 @@ class OllamaClient:
     # ------------------------------------------------------------------
     def chat(self, prompt: str, *, stage: str, model: str | None = None, images: list[Path] | None = None,
              system: str | None = None, think: bool | str | None = None,
-             num_ctx: int | None = None) -> LLMResult:
+             num_ctx: int | None = None, use_cache: bool = True) -> LLMResult:
         model = model or self.cfg["model"]
         messages = []
         if system:
@@ -91,7 +91,7 @@ class OllamaClient:
             },
         }
 
-        cached = self._cache_get(body)
+        cached = self._cache_get(body) if use_cache else None
         if cached is not None:
             log.info("LLM stage=%s キャッシュを再利用", stage)
             return cached
@@ -163,13 +163,15 @@ class OllamaClient:
 
     def chat_json(self, prompt: str, *, stage: str, **kw) -> dict:
         """JSON 応答を得る。Ollama の format=json は生成が大幅に遅くなるため使わず、
-        プロンプトで指示した出力をパースする。失敗時は 1 回だけ再生成する。"""
+        プロンプトで指示した出力をパースする。失敗時はキャッシュを使わずに 1 回だけ再生成する。"""
         for attempt in range(2):
-            res = self.chat(prompt, stage=stage, **kw)
+            res = self.chat(prompt, stage=stage, use_cache=(attempt == 0), **kw)
             try:
                 return parse_json(res.content)
             except (json.JSONDecodeError, ValueError):
-                log.warning("JSON をパースできませんでした stage=%s (attempt %d)", stage, attempt + 1)
+                log.warning("JSON をパースできませんでした stage=%s (attempt %d) 先頭: %r",
+                            stage, attempt + 1, res.content[:200])
+                log.debug("パース不能な応答全文 stage=%s:\n%s", stage, res.content)
         raise LLMError(f"JSON 応答を得られませんでした (stage={stage})")
 
     # ------------------------------------------------------------------
@@ -228,10 +230,20 @@ def parse_json(text: str) -> dict:
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        m = re.search(r"\{.*\}", text, re.S)
-        if m:
-            return json.loads(m.group(0))
-        raise
+    m = re.search(r"\{.*\}", text, re.S)
+    candidates = [text] + ([m.group(0)] if m else [])
+    for cand in candidates:
+        # LaTeX を含む応答では \frac の \f が正当なエスケープとして化けるため、文字どおり解釈を先に試す
+        for fix in (_escape_backslashes, lambda t: t):
+            try:
+                data = json.loads(fix(cand))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict):
+                return data
+    raise ValueError("JSON オブジェクトとして解釈できません")
+
+
+def _escape_backslashes(text: str) -> str:
+    """LaTeX (\\frac など) による不正な JSON エスケープを、文字どおりのバックスラッシュとして扱う。"""
+    return re.sub(r'\\(?!["\\/])', r"\\\\", text)
