@@ -133,7 +133,11 @@ def shorten_if_needed(summary: str, llm: OllamaClient, limit: int, fmt: str, *, 
     over = {n: body_chars(b) for n, b in sections.items() if body_chars(b) > limit}
     if not over:
         return summary
-    targets = "\n".join(f"- 項目 {n} ({SECTION_TITLES[n - 1]}): 現在 {c} 文字" for n, c in sorted(over.items()))
+    # 上限の 9 割を目標に、何割削ればよいかを渡す (モデルに文字数を数えさせない)
+    targets = "\n".join(
+        f"- 項目 {n} ({SECTION_TITLES[n - 1]}): 約 {c} 文字 → {int(limit * 0.9)} 文字程度に "
+        f"(約 {max(1, round((1 - limit * 0.9 / c) * 10))} 割削る)"
+        for n, c in sorted(over.items()))
     log.info("短縮: %s", ", ".join(f"項目{n}={c}字" for n, c in sorted(over.items())))
     try:
         res = llm.chat(render("shorten", section_char_limit=limit, targets=targets, summary=summary, format=fmt),
