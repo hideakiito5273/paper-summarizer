@@ -196,6 +196,20 @@ def process_pending(cfg: Config, db: DB, llm: OllamaClient, report: RunReport) -
         log.info("==== 処理完了 #%d (%.1f 分)", pid, dur / 60)
 
 
+def first_page_text(pdf: Path, max_chars: int = 3000) -> str:
+    try:
+        import pypdfium2
+
+        doc = pypdfium2.PdfDocument(str(pdf))
+        try:
+            return doc[0].get_textpage().get_text_range()[:max_chars]
+        finally:
+            doc.close()
+    except Exception as e:  # noqa: BLE001 — 取れなくても抽出本文だけで続行する
+        log.warning("1 ページ目の生テキストを取得できません: %r", e)
+        return "(取得不可)"
+
+
 def _read_text(path: Path) -> str | None:
     try:
         return path.read_text().strip()
@@ -219,7 +233,9 @@ def _process_one(cfg: Config, db: DB, llm: OllamaClient, extractor: Extractor, r
     if len(ext.markdown.strip()) < 500:
         raise ValueError("本文をほとんど抽出できませんでした (スキャン PDF の場合は extract.ocr = true)")
 
-    meta = llm.chat_json(prompts.render("metadata", head=ext.head), stage="metadata")
+    # Docling は欄外 (例: "Biometrika (2000), 87, 1") を除去するため、PDF の生テキストも渡す
+    head = f"## PDF 1 ページ目の生テキスト (欄外を含む)\n{first_page_text(pdf)}\n\n## 抽出本文の冒頭\n{ext.head}"
+    meta = llm.chat_json(prompts.render("metadata", head=head), stage="metadata")
     meta = {k: meta.get(k) for k in ("title", "authors", "year", "venue", "doi", "short_title")}
     if not isinstance(meta.get("authors"), list):
         meta["authors"] = [meta["authors"]] if meta.get("authors") else []
