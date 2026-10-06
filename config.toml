@@ -68,3 +68,4 @@ smtp_port = 587
 # 送信元/宛先アドレスとアプリパスワードは .env の
 # NOTIFY_FROM / NOTIFY_TO / SMTP_PASSWORD で指定する
 include_titles = true                     # 本文に論文タイトルまで載せる (要旨は載せない)
+daily_report_hour = 6                     # この時刻以降の最初の実行で 1 日 1 回の稼働報告を送る

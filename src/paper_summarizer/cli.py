@@ -58,13 +58,13 @@ def cmd_run(cfg: Config, db: DB, run_id: str, args) -> int:
         report.aborted = f"{type(e).__name__}: {e}"
         db.finish_run(run_id, "error", len(report.done), len(report.failed), report.aborted)
         if not args.no_notify:
-            notify_report(cfg, report, run_id)
+            notify_report(cfg, report, run_id, db)
         return 1
     status = "aborted" if report.aborted else "ok"
     db.finish_run(run_id, status, len(report.done), len(report.failed), report.aborted)
     log.info("実行終了: 完了 %d / 失敗 %d / 重複 %d", len(report.done), len(report.failed), len(report.duplicates))
     if not args.no_notify:
-        notify_report(cfg, report, run_id)
+        notify_report(cfg, report, run_id, db)
     return 0 if not report.aborted else 1
 
 

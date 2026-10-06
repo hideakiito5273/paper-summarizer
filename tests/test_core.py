@@ -165,3 +165,20 @@ def test_mail_has_titles_not_content():
     assert "Paper T" in body and "b.pdf" in body
     _, body2 = build_message(r, False, "rid")
     assert "Paper T" not in body2
+
+
+def test_daily_report_once_per_day(env, monkeypatch):
+    from datetime import datetime
+    from paper_summarizer import notify
+    cfg, db = env
+    sent = []
+    monkeypatch.setattr(notify, "send", lambda c, s, b: sent.append((s, b)) or True)
+    monkeypatch.setattr(notify, "build_status", lambda c, d: "■ 稼働状況")
+    assert not notify.daily_report_due(cfg, datetime(2026, 10, 7, 0, 0))   # 6 時前は送らない
+    assert notify.daily_report_due(cfg, datetime(2026, 10, 7, 6, 0))
+    notify.notify_report(cfg, RunReport(), "rid", db)                      # 空でも 1 日 1 回は送る
+    notify.notify_report(cfg, RunReport(), "rid", db)                      # 同じ日の 2 回目は送らない
+    assert len(sent) == 1 and "稼働報告" in sent[0][0] and "■ 稼働状況" in sent[0][1]
+    r = RunReport(done=[{"id": 1, "title": "T", "project": "p", "minutes": 1.0}])
+    notify.notify_report(cfg, r, "rid", db)                                # 処理があれば都度送る (稼働状況なし)
+    assert len(sent) == 2 and "完了 1 件" in sent[1][0] and "■ 稼働状況" not in sent[1][1]
