@@ -56,6 +56,15 @@ CREATE TABLE IF NOT EXISTS runs (
     error       TEXT
 );
 
+CREATE TABLE IF NOT EXISTS uploads (
+    id          INTEGER PRIMARY KEY,
+    sha256      TEXT NOT NULL,
+    path        TEXT NOT NULL,
+    user        TEXT NOT NULL,
+    uploaded_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_uploads_sha ON uploads(sha256);
+
 CREATE TABLE IF NOT EXISTS llm_calls (
     id            INTEGER PRIMARY KEY,
     run_id        TEXT,
@@ -91,6 +100,8 @@ class DB:
         for col, typ in (("load_s", "REAL"), ("prefill_s", "REAL"), ("decode_s", "REAL"), ("think", "TEXT")):
             if col not in cols:
                 self.conn.execute(f"ALTER TABLE llm_calls ADD COLUMN {col} {typ}")
+        if "submitted_by" not in {r["name"] for r in self.conn.execute("PRAGMA table_info(papers)")}:
+            self.conn.execute("ALTER TABLE papers ADD COLUMN submitted_by TEXT")
 
     # ---- papers -------------------------------------------------------
     def get(self, paper_id: int) -> sqlite3.Row | None:
@@ -153,6 +164,33 @@ class DB:
         return self.conn.execute(
             "SELECT * FROM papers ORDER BY updated_at DESC LIMIT ?", (limit,)
         ).fetchall()
+
+    # ---- uploads (Web からの投稿者の記録) ---------------------------------
+    def add_upload(self, *, sha256: str, path: str, user: str) -> None:
+        with self.lock:
+            self.conn.execute("INSERT INTO uploads (sha256, path, user, uploaded_at) VALUES (?,?,?,?)",
+                              (sha256, path, user, now()))
+
+    def uploader_of(self, sha256: str) -> str | None:
+        row = self.conn.execute("SELECT user FROM uploads WHERE sha256=? ORDER BY id DESC", (sha256,)).fetchone()
+        return row["user"] if row else None
+
+    # ---- Web 表示用の参照 ------------------------------------------------
+    def by_status(self, statuses: tuple[str, ...], limit: int = 50, newest_first: bool = True) -> list[sqlite3.Row]:
+        order = "DESC" if newest_first else "ASC"
+        q = (f"SELECT * FROM papers WHERE status IN ({','.join('?' * len(statuses))}) "
+             f"ORDER BY updated_at {order}, id {order} LIMIT ?")
+        return self.conn.execute(q, (*statuses, limit)).fetchall()
+
+    def projects(self) -> list[str]:
+        return [r["project"] for r in self.conn.execute("SELECT DISTINCT project FROM papers ORDER BY project")]
+
+    def last_llm_call(self, paper_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM llm_calls WHERE paper_id=? ORDER BY id DESC LIMIT 1",
+                                 (paper_id,)).fetchone()
+
+    def recent_runs(self, limit: int = 10) -> list[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM runs ORDER BY started_at DESC LIMIT ?", (limit,)).fetchall()
 
     # ---- runs / llm calls --------------------------------------------
     def start_run(self, run_id: str, kind: str) -> None:

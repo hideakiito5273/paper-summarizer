@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% set active = 'dash' %}
+{% block title %}ダッシュボード{% endblock %}
+{% block main %}
+<div class="pagehead">
+  <h1>ダッシュボード</h1>
+  <button class="primary" id="run-now">今すぐ処理</button>
+</div>
+<div id="status" data-src="/fragment/status">{% include "_status.html" %}</div>
+{% endblock %}

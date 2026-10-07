@@ -114,6 +114,8 @@ def scan(cfg: Config, db: DB, report: RunReport) -> None:
         replaces = db.find_done_by_name(project, pdf.name)
         pid = db.add(sha256=sha, project=project, source_name=pdf.name, inbox_path=str(pdf),
                      replaces=replaces["id"] if replaces else None)
+        if uploader := db.uploader_of(sha):
+            db.update(pid, submitted_by=uploader)
         log.info("登録 #%d: %s/%s%s", pid, project, pdf.name,
                  f" (#{replaces['id']} の差し替え)" if replaces else "")
 

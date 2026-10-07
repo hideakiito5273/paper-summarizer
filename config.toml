@@ -69,3 +69,10 @@ smtp_port = 587
 # NOTIFY_FROM / NOTIFY_TO / SMTP_PASSWORD で指定する
 include_titles = true                     # 本文に論文タイトルまで載せる (要旨は載せない)
 daily_report_hour = 6                     # この時刻以降の最初の実行で 1 日 1 回の稼働報告を送る
+
+[web]
+host = "0.0.0.0"                          # LAN・公式 VPN からのアクセスを受ける
+port = 8443
+https = true                              # 自己署名証明書 (paper-summarizer web-cert で作成)
+cert = "/data/papers/.state/tls/cert.pem"
+key = "/data/papers/.state/tls/key.pem"

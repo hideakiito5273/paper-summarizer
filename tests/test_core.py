@@ -82,7 +82,7 @@ def env(tmp_path):
     paths = Paths(root=tmp_path / "papers", db=tmp_path / "state" / "db.sqlite3",
                   log_dir=tmp_path / "logs", work_dir=tmp_path / "work")
     cfg = Config(paths=paths, scan={"min_age_seconds": 0}, ollama={"model": "m"}, extract={},
-                 summarize={}, notify={}, secrets={})
+                 summarize={}, notify={}, secrets={}, web={})
     ensure_dirs(cfg)
     return cfg, DB(paths.db)
 
