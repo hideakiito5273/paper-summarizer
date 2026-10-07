@@ -79,15 +79,19 @@ def render_summary(meta: dict, summary_md: str, verification: dict) -> str:
 
 
 def verification_label(v: dict) -> str:
-    n = len(v.get("rounds", []))
+    rounds = v.get("rounds", [])
+    n = len(rounds)
     if v.get("converged"):
-        return f"{n} ラウンドで指摘なし"
-    last = v["rounds"][-1] if v.get("rounds") else {"issues": []}
+        return f"照合 {n} 回で指摘なし"
+    last = rounds[-1] if rounds else {"issues": []}
     if last.get("verify_failed_parts"):
-        return f"{n} ラウンド目の照合に失敗 (パート {last['verify_failed_parts']} 未検証)"
-    if last.get("revise_failed") or last.get("revise_rejected"):
-        return f"{n} ラウンド実施 (最終ラウンドの指摘 {len(last['issues'])} 件は未修正)"
-    return f"{n} ラウンド実施 (最終ラウンドの指摘 {len(last['issues'])} 件を修正済み・再照合なし)"
+        return f"照合 {n} 回目に失敗 (未検証)"
+    k = len(last["issues"])
+    if last.get("revise_failed") or last.get("revise_rejected") or last.get("revise_unchanged"):
+        return f"照合 {n} 回、指摘 {k} 件を修正できず残っています"
+    if "scope" not in last and k:  # 旧方式 (最後の指摘を修正したが再照合していない)
+        return f"{n} ラウンド実施 (最終ラウンドの指摘 {k} 件を修正済み・再照合なし)"
+    return f"照合 {n} 回、修正回数の上限に達し指摘 {k} 件が残っています (verification.json 参照)"
 
 
 def write_outputs(out_dir: Path, pdf: Path, meta: dict, summary_md: str, verification: dict,
