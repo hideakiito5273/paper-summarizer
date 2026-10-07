@@ -15,7 +15,7 @@
     <div><span class="status-dot running"></span><a href="/paper/{{ p.row.id }}"><b>{{ p.row.title or p.row.source_name }}</b></a>
       <span class="mono id">#{{ p.row.id }}</span> <span class="label">{{ p.row.project }}</span></div>
     <div class="muted small" style="margin-left:14px">{{ p.stage }} · 経過 {{ p.elapsed }} · 試行 {{ p.row.attempts }}</div>
-    <div class="progress" style="margin-left:14px"><span style="width: {{ (p.progress * 100)|round|int }}%"></span></div>
+    <div class="progress" style="margin-left:14px"><span style="width: {{ ((p.progress or 0) * 100)|round|int }}%"></span></div>
   </div>
   {% else %}<div class="box-empty">処理中の論文はありません</div>{% endfor %}
 </div>
