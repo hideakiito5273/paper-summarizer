@@ -2,19 +2,19 @@
 {% block title %}失敗・重複{% endblock %}
 {% block main %}
 <div class="pagehead"><h1>失敗・重複</h1></div>
-<section class="card">
-{% if rows %}
+<div class="box">
+  <div class="box-header"><h2>対応が必要な論文</h2><span class="counter {{ 'red' if rows }}">{{ rows|length }}</span></div>
   {% for r in rows %}
-  <div class="failrow">
-    <div class="line">
-      <span class="pill {{ 'bad' if r.status == 'failed' }}">{{ STATUS_LABELS.get(r.status, r.status) }}</span>
-      <strong>#{{ r.id }} {{ r.source_name }}</strong> <span class="muted">· {{ r.project }} · {{ r.updated_at|t }}</span>
-      {% if r.status == 'failed' %}<button data-action="retry" data-id="{{ r.id }}">再試行</button>{% endif %}
+  <div class="box-row">
+    <div class="actions">
+      {% if r.status == 'failed' %}<span class="label red">失敗</span>{% else %}<span class="label">{{ STATUS_LABELS.get(r.status, r.status) }}</span>{% endif %}
+      <b>{{ r.source_name }}</b> <span class="mono id">#{{ r.id }}</span> <span class="label">{{ r.project }}</span>
+      <span class="muted small">{{ r.updated_at|t }}</span>
+      {% if r.status == 'failed' %}<button class="primary" style="margin-left:auto" data-action="retry" data-id="{{ r.id }}">再試行</button>{% endif %}
     </div>
-    <div class="muted small">{{ r.last_error or '' }}</div>
-    {% if errors.get(r.id) %}<details><summary class="small">詳細</summary><pre>{{ errors[r.id] }}</pre></details>{% endif %}
+    <div class="muted small" style="margin-top:4px">{{ r.last_error or '' }}</div>
+    {% if errors.get(r.id) %}<details><summary class="small muted">詳細</summary><pre>{{ errors[r.id] }}</pre></details>{% endif %}
   </div>
-  {% endfor %}
-{% else %}<p class="muted">ありません</p>{% endif %}
-</section>
+  {% else %}<div class="box-empty">ありません</div>{% endfor %}
+</div>
 {% endblock %}

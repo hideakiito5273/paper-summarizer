@@ -5,28 +5,37 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf-token" content="{{ csrf }}">
 <title>{% block title %}論文要約{% endblock %} · paper-summarizer</title>
+<script>
+/* 保存済みのテーマを描画前に当てる (ちらつき防止)。保存できない環境では OS の設定に従う */
+try { const t = localStorage.getItem("ps-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
 <link rel="stylesheet" href="/static/app.css">
 <link rel="stylesheet" href="/static/katex/katex.min.css">
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="/">論文要約</a>
-  <nav>
-    <a href="/" class="{{ 'on' if active == 'dash' }}">ダッシュボード</a>
-    <a href="/upload" class="{{ 'on' if active == 'upload' }}">投稿</a>
-    <a href="/library" class="{{ 'on' if active == 'library' }}">ライブラリ</a>
-    <a href="/failed" class="{{ 'on' if active == 'failed' }}">失敗・重複</a>
-  </nav>
+  <a class="brand" href="/"><span class="dot"></span>paper-summarizer</a>
+  <span class="spacer"></span>
+  <select class="theme-select" id="theme" aria-label="テーマ" title="テーマ">
+    <option value="system">システム</option><option value="light">ライト</option><option value="dark">ダーク</option>
+  </select>
   <form method="post" action="/logout" class="who">
     <span>{{ user_name }}</span>
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <button class="link">ログアウト</button>
   </form>
 </header>
+<nav class="underline-nav">
+  <a href="/" class="{{ 'on' if active == 'dash' }}">ダッシュボード</a>
+  <a href="/upload" class="{{ 'on' if active == 'upload' }}">投稿</a>
+  <a href="/library" class="{{ 'on' if active == 'library' }}">ライブラリ</a>
+  <a href="/failed" class="{{ 'on' if active == 'failed' }}">失敗・重複</a>
+</nav>
 <main>{% block main %}{% endblock %}</main>
 <div id="toast" hidden></div>
 <script src="/static/katex/katex.min.js"></script>
 <script src="/static/katex/auto-render.min.js"></script>
+<script src="/static/theme.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
