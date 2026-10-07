@@ -385,6 +385,7 @@ systemd timer / 手動実行が担い、Web UI は inbox への投稿・状態 D
 - 認証: ユーザーごとのアカウント (`paper-summarizer user add <name>`)。パスワードは scrypt でハッシュ化し `.state/users.json` (権限 600) に保存。セッションは署名付き Cookie (14 日)、POST は CSRF トークン必須
 - 通信: 自己署名証明書による HTTPS (`paper-summarizer web-cert`)。外部 CDN は使わない
 - 投稿者の記録: `uploads` テーブルに SHA-256 と投稿者を記録し、走査時に `papers.submitted_by` へ反映
+- アクセスログ: 全リクエストを `接続元 IP / メソッド / パス / 応答コード / ユーザー / 処理時間` でアプリログに記録 (ロガー `paper_summarizer.web.access`)。30 秒ごとの自動更新と静的ファイルは DEBUG (ファイルのみ)。ログイン成功・失敗・ログアウトも接続元 IP 付きで記録
 - 投稿直後のファイルは書き込み完了済みなので、同期途中を避けるための待ち時間 (`min_age_seconds`) の対象外にする (mtime を過去に設定)
 - systemd: `paper-summarizer-web.service` (`KillMode=process` で、画面から起動した要約処理を Web UI の再起動で止めない)
 

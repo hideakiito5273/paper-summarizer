@@ -29,6 +29,7 @@ from ..output import first_point
 from . import auth
 
 log = logging.getLogger(__name__)
+access = logging.getLogger("paper_summarizer.web.access")
 HERE = Path(__file__).parent
 
 STAGE_LABELS = {
@@ -42,6 +43,11 @@ STATUS_LABELS = {
 CITE_RE = re.compile(r"\[(§[^\]]+)\]")
 CITE_ID_RE = re.compile(r"§[\w.]+-p\d+")
 REVIEW_RE = re.compile(r"^review_[\w-]+\.md$")
+
+
+def client_ip(request: Request) -> str:
+    """接続元 IP。Web UI はプロキシを介さず直接受けるため、X-Forwarded-For は信用しない。"""
+    return request.client.host if request.client else "?"
 
 
 # ---- 表示用ヘルパー -------------------------------------------------------------
@@ -184,6 +190,24 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     state_dir = cfg.paths.db.parent
     db = DB(cfg.paths.db)
     app = FastAPI(title="paper-summarizer", docs_url=None, redoc_url=None, openapi_url=None)
+    # アクセスログ (接続元 IP・ユーザー・パス・応答コード・時間)。セッションを読むため SessionMiddleware の内側に置く
+    #  (add_middleware は後から追加したものが外側になるので、Session より先に登録する)
+    @app.middleware("http")
+    async def access_log(request: Request, call_next):
+        t0 = time.monotonic()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        finally:
+            path = request.url.path
+            user = request.session.get("user", "-") if "session" in request.scope else "-"
+            quiet = path.startswith("/static/") or path == "/fragment/status"  # 自動更新・静的ファイルは詳細ログのみ
+            (access.debug if quiet else access.info)(
+                "%s %s %s %d user=%s %.0fms", client_ip(request), request.method, path, status, user,
+                (time.monotonic() - t0) * 1000)
+
     app.add_middleware(SessionMiddleware, secret_key=auth.secret_key(state_dir), session_cookie="ps_session",
                        max_age=14 * 24 * 3600, same_site="lax", https_only=cfg.web.get("https", True))
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
@@ -236,16 +260,17 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     def login(request: Request, username: str = Form(...), password: str = Form(...), csrf: str = Form("")):
         require_csrf(request, csrf)
         if not auth.verify(state_dir, username.strip(), password):
-            log.warning("ログイン失敗: %s (%s)", username, request.client.host if request.client else "?")
+            log.warning("ログイン失敗: %s (%s)", username, client_ip(request))
             return RedirectResponse("/login?error=1", status_code=303)
         request.session.clear()
         request.session.update(user=username.strip(), csrf=secrets.token_hex(16))
-        log.info("ログイン: %s", username)
+        log.info("ログイン: %s (%s)", username, client_ip(request))
         return RedirectResponse("/", status_code=303)
 
     @app.post("/logout")
     def logout(request: Request, csrf: str = Form("")):
         require_csrf(request, csrf)
+        log.info("ログアウト: %s (%s)", request.session.get("user", "-"), client_ip(request))
         request.session.clear()
         return RedirectResponse("/login", status_code=303)
 

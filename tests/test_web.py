@@ -119,3 +119,18 @@ def test_render_markdown_keeps_math_and_links_citations():
     h = render_markdown("- 式 $x_1 * y_2$ と $$\\frac{a}{b}$$ を使う。 [§2.1-p3, §3-p1]\n- 普通の [リンク](http://x)")
     assert "$x_1 * y_2$" in h and "<em>" not in h
     assert 'data-ids="§2.1-p3,§3-p1"' in h and '<a href="http://x">' in h
+
+
+def test_access_log_records_ip_and_user(client, caplog):
+    import logging
+    caplog.set_level(logging.DEBUG, logger="paper_summarizer")
+    _login(client)
+    client.get("/library")
+    client.get("/fragment/status")
+    lines = [r for r in caplog.records if r.name == "paper_summarizer.web.access"]
+    lib = [r for r in lines if "/library" in r.getMessage()]
+    assert lib and lib[-1].levelno == logging.INFO and "user=ito" in lib[-1].getMessage()
+    assert "testclient" in lib[-1].getMessage()  # TestClient の接続元
+    frag = [r for r in lines if "/fragment/status" in r.getMessage()]
+    assert frag and frag[-1].levelno == logging.DEBUG  # 自動更新は詳細ログのみ
+    assert any("ログイン: ito (testclient)" in r.getMessage() for r in caplog.records)
