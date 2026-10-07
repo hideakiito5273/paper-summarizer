@@ -7,14 +7,15 @@
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body class="login-page">
-<form method="post" action="/login" class="login card">
-  <h1>論文要約</h1>
-  <p class="muted">DGX Spark ローカル要約システム</p>
-  {% if error %}<p class="error">ユーザー名またはパスワードが違います</p>{% endif %}
+<div class="logo"></div>
+<h1>paper-summarizer にログイン</h1>
+<form method="post" action="/login" class="login">
+  {% if error %}<p class="error small">ユーザー名またはパスワードが違います</p>{% endif %}
   <label>ユーザー名<input name="username" autocomplete="username" required autofocus></label>
   <label>パスワード<input name="password" type="password" autocomplete="current-password" required></label>
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <button class="primary">ログイン</button>
 </form>
+<p class="login-note">DGX Spark ローカル論文要約 · 研究室 LAN / 公式 VPN 内専用</p>
 </body>
 </html>

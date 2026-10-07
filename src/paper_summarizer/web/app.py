@@ -78,6 +78,22 @@ def stage_label(stage: str) -> str:
     return label
 
 
+_STAGE_ORDER = ["formula", "figure", "metadata", "notes", "merge", "shorten", "verify", "revise"]
+
+
+def stage_progress(stage: str) -> float:
+    """最後に完了した段階から、おおよその進み具合 (0〜1) を出す。照合・修正は繰り返すため 0.9 で頭打ち。"""
+    base, _, rest = stage.partition(":")
+    if base not in _STAGE_ORDER:
+        return 0.05
+    frac = (_STAGE_ORDER.index(base) + 1) / len(_STAGE_ORDER)
+    m = re.match(r"(\d+)/(\d+)", rest)
+    if base == "notes" and m:  # 精読は i/n で細かく
+        start = _STAGE_ORDER.index("notes") / len(_STAGE_ORDER)
+        frac = start + (int(m.group(1)) / int(m.group(2))) / len(_STAGE_ORDER)
+    return min(frac, 0.9)
+
+
 def render_markdown(text: str) -> str:
     """要約などの Markdown を HTML にする。数式 ($…$, $$…$$) は KaTeX に任せるため退避し、
     根拠表示 [§3.2-p4] はクリックで原文を開けるリンクにする。"""
@@ -100,6 +116,12 @@ def render_markdown(text: str) -> str:
     text = CITE_RE.sub(cite, text)
     out = md.markdown(text, extensions=["tables", "sane_lists", "fenced_code"])
     return re.sub(r"\x00(\d+)\x00", lambda m: stash[int(m.group(1))], out)
+
+
+def strip_title_block(text: str) -> str:
+    """ページ上部に書誌情報を出すため、Markdown 冒頭のタイトル (#) と書誌表を除く。"""
+    m = re.search(r"(?m)^## ", text)
+    return text[m.start():] if m else text
 
 
 def _safe_output_dir(cfg: Config, row) -> Path:
@@ -136,10 +158,10 @@ def status_data(cfg: Config, db: DB) -> dict:
         call = db.last_llm_call(row["id"])
         started = row["started_at"]
         if call is None or (started and call["created_at"] < started):
-            stage = "PDF の抽出 (Docling)"
+            stage, progress = "PDF の抽出 (Docling)", 0.03
         else:
-            stage = f"{stage_label(call['stage'])} まで完了"
-        processing.append({"row": row, "stage": stage, "elapsed": elapsed_since(started)})
+            stage, progress = f"{stage_label(call['stage'])} まで完了", stage_progress(call["stage"])
+        processing.append({"row": row, "stage": stage, "progress": progress, "elapsed": elapsed_since(started)})
 
     counts: dict[str, dict[str, int]] = {}
     for r in db.status_counts():
@@ -307,7 +329,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             out = _safe_output_dir(cfg, row)
             for key, fname in (("summary", "summary.md"), ("sections", "sections.md")):
                 if (out / fname).exists():
-                    docs[key] = (out / fname).read_text(encoding="utf-8")
+                    docs[key] = strip_title_block((out / fname).read_text(encoding="utf-8"))
         verification = None
         if row["output_dir"] and (Path(row["output_dir"]) / "verification.json").exists():
             verification = json.loads((Path(row["output_dir"]) / "verification.json").read_text(encoding="utf-8"))

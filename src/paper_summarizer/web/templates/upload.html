@@ -2,22 +2,25 @@
 {% block title %}投稿{% endblock %}
 {% block main %}
 <div class="pagehead"><h1>論文の投稿</h1></div>
-<section class="card">
-  <label class="field">プロジェクト
-    <input id="project" list="projects" placeholder="例: multiscale_surrogate" autocomplete="off" required
-           pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,63}">
-    <datalist id="projects">{% for p in projects %}<option value="{{ p }}">{% endfor %}</datalist>
-    <span class="muted small">既存のプロジェクトを選ぶか、新しい名前 (英数字・ハイフン・アンダースコア) を入力</span>
-  </label>
-  <div id="drop" class="drop" tabindex="0">
-    <p><strong>PDF をここにドロップ</strong></p>
-    <p class="muted">またはクリックして選択 (複数可・1 ファイル 200 MB まで)</p>
-    <input id="files" type="file" accept="application/pdf,.pdf" multiple hidden>
+<div class="box">
+  <div class="box-header"><h2>PDF をアップロード</h2></div>
+  <div class="box-body">
+    <label class="field"><span>プロジェクト</span>
+      <input id="project" list="projects" placeholder="例: multiscale_surrogate" autocomplete="off" required
+             pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,63}" style="max-width:360px">
+      <datalist id="projects">{% for p in projects %}<option value="{{ p }}">{% endfor %}</datalist>
+      <span class="muted small">既存のプロジェクトを選ぶか、新しい名前 (英数字・ハイフン・アンダースコア) を入力</span>
+    </label>
+    <div id="drop" class="drop" tabindex="0">
+      <p><b>PDF をここにドラッグ & ドロップ</b></p>
+      <p class="muted small">またはクリックして選択 · 複数可 · 1 ファイル 200 MB まで</p>
+      <input id="files" type="file" accept="application/pdf,.pdf" multiple hidden>
+    </div>
+    <ul id="upload-results" class="results"></ul>
   </div>
-  <ul id="upload-results" class="results"></ul>
-  <div class="actions">
+  <div class="box-row actions">
     <button class="primary" id="run-now">今すぐ処理を開始</button>
     <span class="muted small">押さなければ次回の自動実行 (6 時間ごと) で処理されます</span>
   </div>
-</section>
+</div>
 {% endblock %}

@@ -1,20 +1,20 @@
 {% extends "base.html" %}{% set active = 'library' %}
 {% block title %}{{ project }}{% endblock %}
 {% block main %}
-<div class="pagehead"><h1><a href="/library" class="muted">ライブラリ</a> / {{ project }}</h1></div>
-<section class="card">
-  <table class="papers"><thead><tr><th>年</th><th>第一著者</th><th>タイトル / 要旨</th><th>投稿者</th><th>処理日</th></tr></thead><tbody>
+<div class="pagehead"><h1><a href="/library">ライブラリ</a> <span class="muted">/</span> {{ project }}</h1></div>
+<div class="box">
+  <div class="box-header"><h2>論文</h2><span class="counter">{{ papers|length }}</span></div>
+  <table><thead><tr><th>年</th><th>タイトル</th><th>第一著者</th><th>投稿者</th><th>処理</th></tr></thead><tbody>
   {% for p in papers %}
-  <tr><td>{{ p.row.year or '' }}</td><td>{{ p.first_author }}</td>
-      <td><a href="/paper/{{ p.row.id }}">{{ p.row.title or p.row.source_name }}</a>
-          <div class="muted small gist">{{ p.gist }}</div></td>
-      <td>{{ p.row.submitted_by or '' }}</td><td>{{ p.row.finished_at|t }}</td></tr>
-  {% else %}<tr><td colspan="5" class="muted">処理済みの論文はまだありません</td></tr>
+  <tr><td class="num muted">{{ p.row.year or '' }}</td>
+      <td><a href="/paper/{{ p.row.id }}"><b>{{ p.row.title or p.row.source_name }}</b></a><div class="gist">{{ p.gist }}</div></td>
+      <td>{{ p.first_author }}</td><td>{{ p.row.submitted_by or '' }}</td><td class="num muted">{{ p.row.finished_at|t }}</td></tr>
+  {% else %}<tr><td colspan="5" class="box-empty">処理済みの論文はまだありません</td></tr>
   {% endfor %}</tbody></table>
-</section>
-<section class="card">
-  <h2>横断レビュー</h2>
-  {% if reviews %}<ul class="plain">{% for r in reviews %}<li><a href="/library/{{ project }}/review/{{ r }}">{{ r }}</a></li>{% endfor %}</ul>
-  {% else %}<p class="muted">まだありません (作成: <code>paper-summarizer review {{ project }}</code>)</p>{% endif %}
-</section>
+</div>
+<div class="box">
+  <div class="box-header"><h2>横断レビュー</h2><span class="counter">{{ reviews|length }}</span></div>
+  {% for r in reviews %}<div class="box-row"><a class="mono" href="/library/{{ project }}/review/{{ r }}">{{ r }}</a></div>
+  {% else %}<div class="box-empty">まだありません · 作成: <code>paper-summarizer review {{ project }}</code></div>{% endfor %}
+</div>
 {% endblock %}
