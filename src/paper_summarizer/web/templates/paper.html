@@ -1,33 +1,39 @@
 {% extends "base.html" %}{% set active = 'library' %}
 {% block title %}{{ row.title or row.source_name }}{% endblock %}
 {% block main %}
-<div class="pagehead">
-  <h1><a href="/library/{{ row.project }}" class="muted">{{ row.project }}</a> / #{{ row.id }}</h1>
-  <div class="actions">
-    <a class="button" href="/paper/{{ row.id }}/pdf" target="_blank">PDF を開く</a>
-    {% if row.status == 'done' %}<button data-action="reprocess" data-id="{{ row.id }}"
-      data-confirm="この論文を現在の設定で再要約します。旧版は _history/ に残ります。よろしいですか？">再処理</button>{% endif %}
-    {% if row.status == 'failed' %}<button data-action="retry" data-id="{{ row.id }}">再試行</button>{% endif %}
+<div class="paper-head">
+  <div class="crumb"><a href="/library">ライブラリ</a> / <a href="/library/{{ row.project }}">{{ row.project }}</a> / <span class="mono">#{{ row.id }}</span></div>
+  <div class="pagehead" style="align-items:flex-start">
+    <div>
+      <h1>{{ row.title or row.source_name }}</h1>
+      <div class="byline">{{ authors|join(', ') }}{% if row.year %} · {{ row.year }}{% endif %}{% if row.venue %} · {{ row.venue }}{% endif %}
+        {% if row.doi %} · <a href="https://doi.org/{{ row.doi }}" target="_blank" rel="noreferrer">DOI</a>{% endif %}</div>
+      <div class="small muted" style="margin-top:8px">
+        {% if row.status == 'done' %}<span class="label green">完了</span>{% elif row.status == 'failed' %}<span class="label red">失敗</span>
+        {% else %}<span class="label">{{ STATUS_LABELS.get(row.status, row.status) }}</span>{% endif %}
+        {% if verification %}{% if verification.converged %}<span class="label green">照合 {{ verification.rounds|length }} 回で指摘なし</span>
+        {% else %}<span class="label yellow">照合 {{ verification.rounds|length }} 回・未収束</span>{% endif %}{% endif %}
+        <span class="mono">{{ row.source_name }}</span>{% if row.submitted_by %} · 投稿 {{ row.submitted_by }}{% endif %}
+        · {{ row.finished_at|t }} · {{ row.duration_s|minutes }}{% if row.model %} · <span class="mono">{{ row.model }}</span>{% endif %}</div>
+    </div>
+    <div class="actions">
+      <a class="button" href="/paper/{{ row.id }}/pdf" target="_blank">PDF</a>
+      {% if row.status == 'done' %}<button data-action="reprocess" data-id="{{ row.id }}"
+        data-confirm="この論文を現在の設定で再要約します。旧版は _history/ に残ります。よろしいですか？">再処理</button>{% endif %}
+      {% if row.status == 'failed' %}<button class="primary" data-action="retry" data-id="{{ row.id }}">再試行</button>{% endif %}
+    </div>
   </div>
-</div>
-<section class="card meta">
-  <h2 class="title">{{ row.title or row.source_name }}</h2>
-  <p class="muted">{{ authors|join(', ') }}{% if row.year %} ({{ row.year }}){% endif %}{% if row.venue %} · {{ row.venue }}{% endif %}
-    {% if row.doi %} · <a href="https://doi.org/{{ row.doi }}" target="_blank" rel="noreferrer">DOI</a>{% endif %}</p>
-  <p class="muted small">状態 {{ STATUS_LABELS.get(row.status, row.status) }} · ファイル {{ row.source_name }}
-    {% if row.submitted_by %} · 投稿 {{ row.submitted_by }}{% endif %} · 処理 {{ row.finished_at|t }} {{ row.duration_s|minutes }}
-    {% if verification %} · 自己検証 {{ verification.rounds|length }} 回 {{ '(収束)' if verification.converged else '(未収束)' }}{% endif %}</p>
   {% if row.last_error and row.status != 'done' %}<p class="err small">{{ row.last_error }}</p>{% endif %}
-</section>
+</div>
 {% if docs %}
 <nav class="tabs">
   <a href="?tab=summary" class="{{ 'on' if tab == 'summary' }}">要約</a>
   {% if docs.sections %}<a href="?tab=sections" class="{{ 'on' if tab == 'sections' }}">節ごとの要約</a>{% endif %}
 </nav>
-<article class="card doc" data-paper="{{ row.id }}">{{ docs[tab]|md|safe }}</article>
-{% else %}<p class="muted">要約はまだありません。</p>{% endif %}
+<article class="box doc" data-paper="{{ row.id }}">{{ docs[tab]|md|safe }}</article>
+{% else %}<div class="box box-empty">要約はまだありません</div>{% endif %}
 <aside id="evidence" class="evidence" hidden>
-  <div class="evhead"><strong>根拠段落の原文</strong><button class="link" id="ev-close">閉じる</button></div>
+  <div class="evhead"><b>根拠段落の原文</b><button class="link" id="ev-close">閉じる</button></div>
   <div id="ev-body"></div>
 </aside>
 {% endblock %}

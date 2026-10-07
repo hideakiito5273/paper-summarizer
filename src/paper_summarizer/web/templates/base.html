@@ -10,19 +10,20 @@
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="/">論文要約</a>
-  <nav>
-    <a href="/" class="{{ 'on' if active == 'dash' }}">ダッシュボード</a>
-    <a href="/upload" class="{{ 'on' if active == 'upload' }}">投稿</a>
-    <a href="/library" class="{{ 'on' if active == 'library' }}">ライブラリ</a>
-    <a href="/failed" class="{{ 'on' if active == 'failed' }}">失敗・重複</a>
-  </nav>
+  <a class="brand" href="/"><span class="dot"></span>paper-summarizer</a>
+  <span class="spacer"></span>
   <form method="post" action="/logout" class="who">
     <span>{{ user_name }}</span>
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <button class="link">ログアウト</button>
   </form>
 </header>
+<nav class="underline-nav">
+  <a href="/" class="{{ 'on' if active == 'dash' }}">ダッシュボード</a>
+  <a href="/upload" class="{{ 'on' if active == 'upload' }}">投稿</a>
+  <a href="/library" class="{{ 'on' if active == 'library' }}">ライブラリ</a>
+  <a href="/failed" class="{{ 'on' if active == 'failed' }}">失敗・重複</a>
+</nav>
 <main>{% block main %}{% endblock %}</main>
 <div id="toast" hidden></div>
 <script src="/static/katex/katex.min.js"></script>

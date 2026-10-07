@@ -1,61 +1,56 @@
 {% set h = s.health %}
-<section class="grid4">
-  <div class="stat"><div class="k">処理中</div><div class="v">{{ s.processing|length }}</div></div>
-  <div class="stat"><div class="k">処理待ち</div><div class="v">{{ s.pending|length }}</div></div>
-  <div class="stat"><div class="k">失敗</div><div class="v {{ 'bad' if s.failed }}">{{ s.failed|length }}</div></div>
-  <div class="stat"><div class="k">次回の自動実行</div><div class="v small">{{ (h.next_run or '不明')[4:20] }}</div></div>
-</section>
+<div class="statusbar">
+  <span class="item"><span class="status-dot {{ 'running' if s.running else 'green' }}"></span>{{ '実行中' if s.running else '待機中' }}</span>
+  <span class="item"><span class="status-dot {{ 'green' if h.ollama and h.model else 'red' }}"></span>Ollama
+    <b>{{ 'OK' if h.ollama and h.model else ('モデルなし' if h.ollama else '応答なし') }}</b></span>
+  <span class="item">ディスク空き <b>{{ h.disk_free_gb }} GB</b></span>
+  <span class="item">次回の自動実行 <b class="mono">{{ h.next_run[4:20] if h.next_run else ('実行中のため未定' if s.running else '不明') }}</b></span>
+  <span class="item right small">30 秒ごとに更新</span>
+</div>
 
-<section class="health">
-  <span class="pill {{ 'ok' if s.running else '' }}">{{ '実行中' if s.running else '待機中' }}</span>
-  <span class="pill {{ 'ok' if h.ollama and h.model else 'bad' }}">Ollama {{ 'OK' if h.ollama and h.model else ('モデルなし' if h.ollama else '応答なし') }}</span>
-  <span class="pill">ディスク空き {{ h.disk_free_gb }} GB</span>
-  <span class="muted small">30 秒ごとに自動更新</span>
-</section>
-
-<section class="card">
-  <h2>処理中</h2>
-  {% if s.processing %}
+<div class="box">
+  <div class="box-header"><h2>処理中</h2><span class="counter {{ 'green' if s.processing }}">{{ s.processing|length }}</span></div>
   {% for p in s.processing %}
-  <div class="proc">
-    <div><a href="/paper/{{ p.row.id }}">#{{ p.row.id }} {{ p.row.title or p.row.source_name }}</a>
-      <span class="muted">· {{ p.row.project }}</span></div>
-    <div class="muted small">{{ p.stage }} · 経過 {{ p.elapsed }} · 試行 {{ p.row.attempts }}</div>
+  <div class="box-row">
+    <div><span class="status-dot running"></span><a href="/paper/{{ p.row.id }}"><b>{{ p.row.title or p.row.source_name }}</b></a>
+      <span class="mono id">#{{ p.row.id }}</span> <span class="label">{{ p.row.project }}</span></div>
+    <div class="muted small" style="margin-left:14px">{{ p.stage }} · 経過 {{ p.elapsed }} · 試行 {{ p.row.attempts }}</div>
+    <div class="progress" style="margin-left:14px"><span style="width: {{ (p.progress * 100)|round|int }}%"></span></div>
   </div>
-  {% endfor %}
-  {% else %}<p class="muted">処理中の論文はありません</p>{% endif %}
-</section>
+  {% else %}<div class="box-empty">処理中の論文はありません</div>{% endfor %}
+</div>
 
-<section class="card">
-  <h2>処理待ち</h2>
+<div class="box">
+  <div class="box-header"><h2>処理待ち</h2><span class="counter">{{ s.pending|length }}</span></div>
   {% if s.pending %}
-  <table><thead><tr><th>#</th><th>プロジェクト</th><th>ファイル</th><th>投稿者</th><th>登録</th><th>前回のエラー</th></tr></thead><tbody>
+  <table><thead><tr><th>#</th><th>ファイル</th><th>プロジェクト</th><th>投稿者</th><th>登録</th></tr></thead><tbody>
   {% for r in s.pending %}
-  <tr><td>{{ r.id }}</td><td>{{ r.project }}</td><td>{{ r.source_name }}</td><td>{{ r.submitted_by or '' }}</td>
-      <td>{{ r.created_at|t }}</td><td class="err small">{{ (r.last_error or '')[:80] }}</td></tr>
+  <tr><td class="mono id">{{ r.id }}</td>
+      <td>{{ r.source_name }}{% if r.last_error %}<div class="err small">前回: {{ r.last_error[:80] }}</div>{% endif %}</td>
+      <td><span class="label">{{ r.project }}</span></td><td>{{ r.submitted_by or '' }}</td>
+      <td class="muted num">{{ r.created_at|t }}</td></tr>
   {% endfor %}</tbody></table>
-  {% else %}<p class="muted">処理待ちの論文はありません</p>{% endif %}
-</section>
+  {% else %}<div class="box-empty">処理待ちの論文はありません</div>{% endif %}
+</div>
 
 <div class="cols">
-<section class="card">
-  <h2>最近の完了</h2>
-  {% if s.done %}
-  <ul class="plain">
-  {% for r in s.done %}
-  <li><a href="/paper/{{ r.id }}">{{ r.title or r.source_name }}</a>
-      <div class="muted small">{{ r.project }} · {{ r.finished_at|t }} · {{ r.duration_s|minutes }}{% if r.submitted_by %} · {{ r.submitted_by }}{% endif %}</div></li>
-  {% endfor %}</ul>
-  {% else %}<p class="muted">まだありません</p>{% endif %}
-</section>
-<section class="card">
-  <h2>実行履歴</h2>
-  <table><thead><tr><th>開始</th><th>種類</th><th>結果</th><th>完了</th><th>失敗</th></tr></thead><tbody>
-  {% for r in s.runs %}
-  <tr><td>{{ r.started_at|t }}</td><td>{{ r.kind }}</td>
-      <td class="{{ 'err' if r.status not in ('ok', None) }}">{{ r.status or '実行中' }}</td>
-      <td>{{ r.n_done or 0 }}</td><td>{{ r.n_failed or 0 }}</td></tr>
-  {% endfor %}</tbody></table>
-  {% if s.failed %}<p><a href="/failed">失敗した論文 {{ s.failed|length }} 件を確認 →</a></p>{% endif %}
-</section>
+  <div class="box">
+    <div class="box-header"><h2>最近の完了</h2><a class="right small" href="/library">すべて見る</a></div>
+    {% for r in s.done %}
+    <div class="box-row">
+      <a href="/paper/{{ r.id }}">{{ r.title or r.source_name }}</a>
+      <div class="muted small"><span class="label">{{ r.project }}</span> {{ r.finished_at|t }} · {{ r.duration_s|minutes }}{% if r.submitted_by %} · {{ r.submitted_by }}{% endif %}</div>
+    </div>
+    {% else %}<div class="box-empty">まだありません</div>{% endfor %}
+  </div>
+  <div class="box">
+    <div class="box-header"><h2>実行履歴</h2>
+      {% if s.failed %}<a class="right small err" href="/failed">失敗 {{ s.failed|length }} 件</a>{% endif %}</div>
+    <table><thead><tr><th>開始</th><th>結果</th><th>完了</th><th>失敗</th></tr></thead><tbody>
+    {% for r in s.runs %}
+    <tr><td class="num">{{ r.started_at|t }}{% if r.kind != 'run' %} <span class="label">{{ r.kind }}</span>{% endif %}</td>
+        <td>{% if r.status == 'ok' %}<span class="label green">成功</span>{% elif r.status %}<span class="label red">{{ r.status }}</span>{% else %}<span class="label yellow">実行中</span>{% endif %}</td>
+        <td class="num">{{ r.n_done or 0 }}</td><td class="num {{ 'err' if r.n_failed }}">{{ r.n_failed or 0 }}</td></tr>
+    {% endfor %}</tbody></table>
+  </div>
 </div>
