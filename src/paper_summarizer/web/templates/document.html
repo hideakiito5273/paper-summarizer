@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% set active = 'library' %}
+{% block title %}{{ title }}{% endblock %}
+{% block main %}
+<div class="pagehead"><h1><a href="/library/{{ project }}" class="muted">{{ project }}</a> / レビュー</h1></div>
+<article class="card doc">{{ body|md|safe }}</article>
+{% endblock %}
