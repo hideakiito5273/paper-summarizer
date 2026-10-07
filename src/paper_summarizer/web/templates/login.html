@@ -4,9 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ログイン · paper-summarizer</title>
+<script>
+/* 保存済みのテーマを描画前に当てる (ちらつき防止)。保存できない環境では OS の設定に従う */
+try { const t = localStorage.getItem("ps-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body class="login-page">
+<select class="theme-select" id="theme" aria-label="テーマ" title="テーマ">
+    <option value="system">システム</option><option value="light">ライト</option><option value="dark">ダーク</option>
+  </select>
+<script src="/static/theme.js"></script>
 <div class="logo"></div>
 <h1>paper-summarizer にログイン</h1>
 <form method="post" action="/login" class="login">

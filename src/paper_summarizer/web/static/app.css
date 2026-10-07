@@ -6,15 +6,27 @@
   --green: #1f883d; --green-hover: #1c8139; --green-fg: #1a7f37; --green-subtle: #dafbe1; --green-border: #4ac26b66;
   --red: #d1242f; --red-subtle: #ffebe9; --yellow: #9a6700; --yellow-subtle: #fff8c5;
   --link: #1a7f37; --counter: #818b981f; --row-hover: #f6f8fa; --shadow: 0 8px 24px #424a5333;
+  color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
+/* テーマ: <html data-theme="light|dark"> で固定。属性がなければ OS の設定に従う */
+:root[data-theme="dark"] {
     --bg: #0d1117; --bg-subtle: #151b23; --bg-inset: #010409; --fg: #f0f6fc; --fg-muted: #9198a1;
     --border: #3d444d; --border-muted: #3d444db3;
     --header-bg: #010409; --header-fg: #f0f6fc; --header-muted: #9198a1;
     --green: #238636; --green-hover: #29903b; --green-fg: #3fb950; --green-subtle: #2ea04326; --green-border: #2ea04366;
     --red: #f85149; --red-subtle: #f851491a; --yellow: #d29922; --yellow-subtle: #bb800926;
     --link: #3fb950; --counter: #656c7633; --row-hover: #151b23; --shadow: 0 8px 24px #01040966;
+    color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+      --bg: #0d1117; --bg-subtle: #151b23; --bg-inset: #010409; --fg: #f0f6fc; --fg-muted: #9198a1;
+      --border: #3d444d; --border-muted: #3d444db3;
+      --header-bg: #010409; --header-fg: #f0f6fc; --header-muted: #9198a1;
+      --green: #238636; --green-hover: #29903b; --green-fg: #3fb950; --green-subtle: #2ea04326; --green-border: #2ea04366;
+      --red: #f85149; --red-subtle: #f851491a; --yellow: #d29922; --yellow-subtle: #bb800926;
+      --link: #3fb950; --counter: #656c7633; --row-hover: #151b23; --shadow: 0 8px 24px #01040966;
+      color-scheme: dark;
   }
 }
 * { box-sizing: border-box; }
@@ -143,3 +155,10 @@ a.cite:hover { color: var(--green-fg); }
   .doc { padding: 16px; } th:nth-child(4), td:nth-child(4) { display: none; } .statusbar .right { margin-left: 0; }
 }
 .doc > :first-child { margin-top: 0; }
+
+/* テーマ切り替え (ヘッダー右上) */
+.theme-select { font: inherit; font-size: 12px; padding: 2px 6px; border-radius: 6px; cursor: pointer;
+                background: transparent; color: var(--header-muted); border: 1px solid #ffffff33; }
+.theme-select:hover { color: var(--header-fg); border-color: #ffffff66; }
+.theme-select option { color: var(--fg); background: var(--bg); }
+.login-page .theme-select { position: fixed; top: 16px; right: 16px; color: var(--fg-muted); border-color: var(--border); }
