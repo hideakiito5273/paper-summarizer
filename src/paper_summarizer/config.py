@@ -44,6 +44,7 @@ class Config:
     summarize: dict
     notify: dict
     secrets: dict
+    web: dict
 
 
 def load_env(path: Path) -> dict:
@@ -80,6 +81,7 @@ def load_config(path: Path | None = None) -> Config:
         summarize=raw.get("summarize", {}),
         notify=raw.get("notify", {}),
         secrets=load_env(PROJECT_DIR / ".env"),
+        web=raw.get("web", {}),
     )
 
 

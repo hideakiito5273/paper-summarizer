@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import logging
-import shutil
 import sys
 import uuid
 from datetime import datetime
@@ -24,23 +22,14 @@ def _run_id() -> str:
     return f"{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:4]}"
 
 
-def _lock(cfg: Config):
-    """多重起動防止。取得できなければ None。"""
-    f = open(cfg.paths.db.parent / "run.lock", "w")
-    try:
-        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        f.close()
-        return None
-    return f
-
-
 # ---------------------------------------------------------------------------
 def cmd_run(cfg: Config, db: DB, run_id: str, args) -> int:
     from .notify import notify_report
     from .pipeline import RunReport, process_pending, scan
 
-    lock = _lock(cfg)
+    from .ops import run_lock
+
+    lock = run_lock(cfg)
     if lock is None:
         log.info("別の実行が進行中のため終了します")
         return 0
@@ -58,13 +47,13 @@ def cmd_run(cfg: Config, db: DB, run_id: str, args) -> int:
         report.aborted = f"{type(e).__name__}: {e}"
         db.finish_run(run_id, "error", len(report.done), len(report.failed), report.aborted)
         if not args.no_notify:
-            notify_report(cfg, report, run_id)
+            notify_report(cfg, report, run_id, db)
         return 1
     status = "aborted" if report.aborted else "ok"
     db.finish_run(run_id, status, len(report.done), len(report.failed), report.aborted)
     log.info("実行終了: 完了 %d / 失敗 %d / 重複 %d", len(report.done), len(report.failed), len(report.duplicates))
     if not args.no_notify:
-        notify_report(cfg, report, run_id)
+        notify_report(cfg, report, run_id, db)
     return 0 if not report.aborted else 1
 
 
@@ -96,42 +85,25 @@ def cmd_review(cfg: Config, db: DB, run_id: str, args) -> int:
 
 
 def cmd_retry(cfg: Config, db: DB, run_id: str, args) -> int:
-    row = db.get(args.id)
-    if row is None or row["status"] not in ("failed", "pending"):
-        print(f"#{args.id} は再試行できる状態ではありません", file=sys.stderr)
+    from .ops import OpError, retry
+
+    try:
+        retry(cfg, db, args.id)
+    except OpError as e:
+        print(e, file=sys.stderr)
         return 1
-    src = Path(row["inbox_path"])
-    if row["status"] == "failed":
-        dest_dir = cfg.paths.inbox / row["project"]
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / row["source_name"]
-        shutil.move(str(src), dest)
-        src.with_name(src.name + ".error.txt").unlink(missing_ok=True)
-        src = dest
-    db.update(args.id, status="pending", attempts=0, inbox_path=str(src))
-    log.info("#%d を再キューしました: %s", args.id, src)
     return 0
 
 
 def cmd_reprocess(cfg: Config, db: DB, run_id: str, args) -> int:
     """処理済みの論文を再要約する (プロンプト・構成の変更後や検証失敗時)。旧版は _history/ に退避される。"""
-    row = db.get(args.id)
-    if row is None or row["status"] != "done":
-        print(f"#{args.id} は done ではありません", file=sys.stderr)
+    from .ops import OpError, reprocess
+
+    try:
+        reprocess(cfg, db, args.id)
+    except OpError as e:
+        print(e, file=sys.stderr)
         return 1
-    src = Path(row["output_dir"]) / "paper.pdf"
-    if not src.exists():
-        print(f"PDF が見つかりません: {src}", file=sys.stderr)
-        return 1
-    dest = cfg.paths.inbox / row["project"] / row["source_name"]
-    if dest.exists():
-        print(f"inbox に同名ファイルがあります: {dest}", file=sys.stderr)
-        return 1
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)  # 旧版は処理成功時に _history/ へ退避されるまで残す
-    pid = db.add(sha256=row["sha256"], project=row["project"], source_name=row["source_name"],
-                 inbox_path=str(dest), replaces=row["id"])
-    log.info("#%d を再処理対象に登録しました → #%d (%s)", row["id"], pid, dest)
     return 0
 
 
@@ -189,6 +161,74 @@ def stage_stats(db: DB, run_id: str) -> dict:
     return {r["s"]: {k: r[k] for k in r.keys() if k != "s"} for r in rows}
 
 
+def cmd_web(cfg: Config, db: DB, run_id: str, args) -> int:
+    import uvicorn
+
+    from .web.app import create_app
+
+    w = cfg.web
+    ssl = {}
+    if w.get("https", True):
+        cert, key = Path(w["cert"]), Path(w["key"])
+        if not (cert.exists() and key.exists()):
+            print("証明書がありません。先に paper-summarizer web-cert を実行してください", file=sys.stderr)
+            return 1
+        ssl = {"ssl_certfile": str(cert), "ssl_keyfile": str(key)}
+    log.info("Web UI を起動: %s://%s:%s", "https" if ssl else "http", w.get("host", "0.0.0.0"), w.get("port", 8443))
+    uvicorn.run(create_app(cfg), host=w.get("host", "0.0.0.0"), port=int(w.get("port", 8443)),
+                log_config=None, access_log=False, **ssl)
+    return 0
+
+
+def cmd_web_cert(cfg: Config, db: DB, run_id: str, args) -> int:
+    """LAN / VPN 内向けの自己署名証明書を作る (ブラウザで初回に警告が出る)。"""
+    import socket
+    import subprocess
+
+    cert, key = Path(cfg.web["cert"]), Path(cfg.web["key"])
+    cert.parent.mkdir(parents=True, exist_ok=True)
+    ips = args.ip or subprocess.run(["hostname", "-I"], capture_output=True, text=True).stdout.split()
+    ips = [ip for ip in ips if not ip.startswith("172.17.")]  # docker0 は除く
+    san = ",".join([f"DNS:{socket.gethostname()}", "DNS:localhost", "IP:127.0.0.1"] + [f"IP:{ip}" for ip in ips])
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                    "-nodes", "-days", "825", "-keyout", str(key), "-out", str(cert),
+                    "-subj", f"/CN={socket.gethostname()}", "-addext", f"subjectAltName={san}"], check=True,
+                   capture_output=True)
+    key.chmod(0o600)
+    print(f"作成しました: {cert}\n  対象: {san}")
+    return 0
+
+
+def cmd_user(cfg: Config, db: DB, run_id: str, args) -> int:
+    import getpass
+
+    from .web import auth
+
+    state = cfg.paths.db.parent
+    if args.action == "list":
+        for name, u in sorted(auth.load_users(state).items()):
+            print(f"{name}\t{u.get('name', '')}")
+        return 0
+    if not args.username:
+        print("ユーザー名を指定してください", file=sys.stderr)
+        return 1
+    if args.action == "remove":
+        ok = auth.remove_user(state, args.username)
+        print("削除しました" if ok else "見つかりません")
+        return 0 if ok else 1
+    pw = getpass.getpass("パスワード: ")
+    if pw != getpass.getpass("パスワード (確認): "):
+        print("パスワードが一致しません", file=sys.stderr)
+        return 1
+    try:
+        auth.set_password(state, args.username, pw, args.name)
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 1
+    print(f"{'更新' if args.action == 'passwd' else '追加'}しました: {args.username}")
+    return 0
+
+
 def cmd_test_mail(cfg: Config, db: DB, run_id: str, args) -> int:
     from .notify import send
 
@@ -233,6 +273,19 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--out", required=True)
     s.add_argument("--model")
     s.set_defaults(func=cmd_try)
+
+    s = sub.add_parser("web", help="Web UI を起動 (LAN / 公式 VPN 内向け)")
+    s.set_defaults(func=cmd_web)
+
+    s = sub.add_parser("web-cert", help="Web UI 用の自己署名証明書を作成")
+    s.add_argument("--ip", action="append", help="証明書に含める IP (省略時は hostname -I)")
+    s.set_defaults(func=cmd_web_cert)
+
+    s = sub.add_parser("user", help="Web UI のユーザー管理")
+    s.add_argument("action", choices=["add", "passwd", "remove", "list"])
+    s.add_argument("username", nargs="?")
+    s.add_argument("--name", help="表示名")
+    s.set_defaults(func=cmd_user)
 
     s = sub.add_parser("test-mail", help="通知メールのテスト送信")
     s.set_defaults(func=cmd_test_mail)

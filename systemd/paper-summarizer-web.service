@@ -1,0 +1,21 @@
+[Unit]
+Description=Paper summarizer web UI (LAN / VPN)
+Wants=ollama.service
+After=network-online.target ollama.service
+
+[Service]
+Type=simple
+User=ito
+Group=ito
+WorkingDirectory=/home/ito/paper-summarizer
+ExecStart=/home/ito/paper-summarizer/.venv/bin/paper-summarizer web
+Restart=on-failure
+RestartSec=5
+# 「今すぐ処理」で起動した要約処理は、Web UI の再起動で止めない
+KillMode=process
+Environment=HF_HUB_OFFLINE=1
+Environment=HF_HUB_DISABLE_TELEMETRY=1
+Environment=DO_NOT_TRACK=1
+
+[Install]
+WantedBy=multi-user.target

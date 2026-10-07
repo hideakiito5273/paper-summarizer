@@ -6,6 +6,12 @@ requires-python = ">=3.12"
 dependencies = [
     "docling",
     "httpx",
+    "fastapi",
+    "uvicorn[standard]",
+    "jinja2",
+    "python-multipart",
+    "markdown",
+    "itsdangerous",
 ]
 
 [project.optional-dependencies]
@@ -20,3 +26,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"paper_summarizer.web" = ["templates/*.html", "static/*", "static/katex/*", "static/katex/fonts/*"]

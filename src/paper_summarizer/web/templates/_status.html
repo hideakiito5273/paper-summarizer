@@ -1,0 +1,61 @@
+{% set h = s.health %}
+<section class="grid4">
+  <div class="stat"><div class="k">処理中</div><div class="v">{{ s.processing|length }}</div></div>
+  <div class="stat"><div class="k">処理待ち</div><div class="v">{{ s.pending|length }}</div></div>
+  <div class="stat"><div class="k">失敗</div><div class="v {{ 'bad' if s.failed }}">{{ s.failed|length }}</div></div>
+  <div class="stat"><div class="k">次回の自動実行</div><div class="v small">{{ (h.next_run or '不明')[4:20] }}</div></div>
+</section>
+
+<section class="health">
+  <span class="pill {{ 'ok' if s.running else '' }}">{{ '実行中' if s.running else '待機中' }}</span>
+  <span class="pill {{ 'ok' if h.ollama and h.model else 'bad' }}">Ollama {{ 'OK' if h.ollama and h.model else ('モデルなし' if h.ollama else '応答なし') }}</span>
+  <span class="pill">ディスク空き {{ h.disk_free_gb }} GB</span>
+  <span class="muted small">30 秒ごとに自動更新</span>
+</section>
+
+<section class="card">
+  <h2>処理中</h2>
+  {% if s.processing %}
+  {% for p in s.processing %}
+  <div class="proc">
+    <div><a href="/paper/{{ p.row.id }}">#{{ p.row.id }} {{ p.row.title or p.row.source_name }}</a>
+      <span class="muted">· {{ p.row.project }}</span></div>
+    <div class="muted small">{{ p.stage }} · 経過 {{ p.elapsed }} · 試行 {{ p.row.attempts }}</div>
+  </div>
+  {% endfor %}
+  {% else %}<p class="muted">処理中の論文はありません</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>処理待ち</h2>
+  {% if s.pending %}
+  <table><thead><tr><th>#</th><th>プロジェクト</th><th>ファイル</th><th>投稿者</th><th>登録</th><th>前回のエラー</th></tr></thead><tbody>
+  {% for r in s.pending %}
+  <tr><td>{{ r.id }}</td><td>{{ r.project }}</td><td>{{ r.source_name }}</td><td>{{ r.submitted_by or '' }}</td>
+      <td>{{ r.created_at|t }}</td><td class="err small">{{ (r.last_error or '')[:80] }}</td></tr>
+  {% endfor %}</tbody></table>
+  {% else %}<p class="muted">処理待ちの論文はありません</p>{% endif %}
+</section>
+
+<div class="cols">
+<section class="card">
+  <h2>最近の完了</h2>
+  {% if s.done %}
+  <ul class="plain">
+  {% for r in s.done %}
+  <li><a href="/paper/{{ r.id }}">{{ r.title or r.source_name }}</a>
+      <div class="muted small">{{ r.project }} · {{ r.finished_at|t }} · {{ r.duration_s|minutes }}{% if r.submitted_by %} · {{ r.submitted_by }}{% endif %}</div></li>
+  {% endfor %}</ul>
+  {% else %}<p class="muted">まだありません</p>{% endif %}
+</section>
+<section class="card">
+  <h2>実行履歴</h2>
+  <table><thead><tr><th>開始</th><th>種類</th><th>結果</th><th>完了</th><th>失敗</th></tr></thead><tbody>
+  {% for r in s.runs %}
+  <tr><td>{{ r.started_at|t }}</td><td>{{ r.kind }}</td>
+      <td class="{{ 'err' if r.status not in ('ok', None) }}">{{ r.status or '実行中' }}</td>
+      <td>{{ r.n_done or 0 }}</td><td>{{ r.n_failed or 0 }}</td></tr>
+  {% endfor %}</tbody></table>
+  {% if s.failed %}<p><a href="/failed">失敗した論文 {{ s.failed|length }} 件を確認 →</a></p>{% endif %}
+</section>
+</div>

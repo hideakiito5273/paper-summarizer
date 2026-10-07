@@ -1,0 +1,15 @@
+{% extends "base.html" %}{% set active = 'library' %}
+{% block title %}ライブラリ{% endblock %}
+{% block main %}
+<div class="pagehead"><h1>ライブラリ</h1></div>
+<div class="projects">
+{% for proj, c in counts|dictsort %}
+  <a class="card project" href="/library/{{ proj }}">
+    <h2>{{ proj }}</h2>
+    <p class="big">{{ c.get('done', 0) }} <span class="muted small">本</span></p>
+    <p class="muted small">{% for k, v in c|dictsort if k != 'done' and k != 'superseded' %}{{ STATUS_LABELS.get(k, k) }} {{ v }} {% endfor %}</p>
+  </a>
+{% else %}<p class="muted">まだ論文がありません。<a href="/upload">投稿</a>から始めてください。</p>
+{% endfor %}
+</div>
+{% endblock %}

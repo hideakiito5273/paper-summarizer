@@ -338,7 +338,9 @@ WAL モード、自動コミット。`run_id` (`YYYYMMDD-HHMMSS-xxxx`) はログ
 
 ### 11.1 メール通知
 
-- 送信条件: 完了・失敗・重複・中断のいずれかがあった実行のみ
+- 送信条件: 完了・失敗・重複・中断のいずれかがあった実行は都度送信する
+- 稼働報告: 1 日 1 回、`notify.daily_report_hour` (6 時) 以降の最初の実行で送る。処理がなくても送るため、メールが来ないことで停止に気づける。同じ回に処理があれば 1 通にまとめる。送信済みの日付は `.state/daily_report.date` に記録
+  - 内容: プロジェクト別の件数、直近 24 時間の実行回数と失敗・異常終了、Ollama とモデルの有無、ディスク空き、次回の実行時刻
 - 件名例: `[paper-summarizer] 完了 1 件 / 失敗 2 件`
 - 本文: ホスト名、run_id、完了論文のタイトルと所要時間、失敗 (最終/再試行予定) のファイル名とエラー種別、重複
 - 認証情報: `.env` の `NOTIFY_FROM` / `NOTIFY_TO` / `SMTP_PASSWORD` (Gmail アプリパスワード)
@@ -354,9 +356,27 @@ WAL モード、自動コミット。`run_id` (`YYYYMMDD-HHMMSS-xxxx`) はログ
 
 ---
 
-## 12. 運用
+## 12. Web UI
 
-### 12.1 定期実行
+研究室 LAN と大学の公式 VPN 内からブラウザで使う画面 (`paper-summarizer web`、HTTPS:8443)。要約処理そのものは
+systemd timer / 手動実行が担い、Web UI は inbox への投稿・状態 DB の参照・成果物の閲覧・再試行の受付だけを行う。
+
+| 画面 | 内容 |
+|---|---|
+| ダッシュボード `/` | 処理中 (段階と経過時間)・処理待ち・最近の完了・実行履歴・Ollama / ディスク / 次回実行。30 秒ごとに自動更新。「今すぐ処理」 |
+| 投稿 `/upload` | プロジェクトを選んで PDF をドラッグ & ドロップ。PDF 判定・重複判定をその場で行い、`inbox/<project>/` に一時名 → rename で保存 |
+| ライブラリ `/library` | プロジェクト別の論文一覧、要約・節ごとの要約・PDF・横断レビュー。数式は KaTeX (Spark 内に同梱)、根拠表示 `[§…]` クリックで原文を表示 |
+| 失敗・重複 `/failed` | 理由とスタックトレース、再試行ボタン。論文ページには再処理ボタン |
+
+- 認証: ユーザーごとのアカウント (`paper-summarizer user add <name>`)。パスワードは scrypt でハッシュ化し `.state/users.json` (権限 600) に保存。セッションは署名付き Cookie (14 日)、POST は CSRF トークン必須
+- 通信: 自己署名証明書による HTTPS (`paper-summarizer web-cert`)。外部 CDN は使わない
+- 投稿者の記録: `uploads` テーブルに SHA-256 と投稿者を記録し、走査時に `papers.submitted_by` へ反映
+- 投稿直後のファイルは書き込み完了済みなので、同期途中を避けるための待ち時間 (`min_age_seconds`) の対象外にする (mtime を過去に設定)
+- systemd: `paper-summarizer-web.service` (`KillMode=process` で、画面から起動した要約処理を Web UI の再起動で止めない)
+
+## 13. 運用
+
+### 13.1 定期実行
 
 `systemd/paper-summarizer.service` (oneshot、`User=ito`、`TimeoutStartSec=infinity`、`HF_HUB_OFFLINE=1`) と `paper-summarizer.timer` (`OnCalendar=*-*-* 00/6:00:00`、`Persistent=true`)。
 
@@ -365,7 +385,7 @@ WAL モード、自動コミット。`run_id` (`YYYYMMDD-HHMMSS-xxxx`) はログ
 
 > **状態**: ユニットは未登録 (動作確認後に登録予定)。現在は手動実行。
 
-### 12.2 コマンド
+### 13.2 コマンド
 
 | コマンド | 用途 |
 |---|---|
@@ -377,8 +397,10 @@ WAL モード、自動コミット。`run_id` (`YYYYMMDD-HHMMSS-xxxx`) はログ
 | `paper-summarizer readme <project>` | 文献一覧の再生成 |
 | `paper-summarizer try <pdf> --out <dir> [--model M]` | DB・ファイル移動なしの試験要約 (モデル比較・プロンプト調整用) |
 | `paper-summarizer test-mail` | 通知メールのテスト送信 |
+| `paper-summarizer web` / `web-cert` | Web UI の起動 / 自己署名証明書の作成 |
+| `paper-summarizer user add\|passwd\|remove\|list` | Web UI のユーザー管理 |
 
-### 12.3 手動実行の注意
+### 13.3 手動実行の注意
 
 端末から `run` を実行するとセッション終了で処理が止まる。手動で長時間実行する場合は切り離して起動する:
 
@@ -391,9 +413,9 @@ setsid nohup env HF_HUB_OFFLINE=1 .venv/bin/paper-summarizer run \
 
 ---
 
-## 13. 性能 (実測)
+## 14. 性能 (実測)
 
-### 13.1 phase-a 適用後 (2026-10-05)
+### 14.1 phase-a 適用後 (2026-10-05)
 
 Biometrika 2000 (13 頁) での比較:
 
@@ -403,7 +425,7 @@ Biometrika 2000 (13 頁) での比較:
 | 段階別 thinking | 11.8 分 | 38.6 分 | 50.4 分 | 8.3 tok/s |
 | 段階別 thinking + MTP + 短縮工程 | 4.8 分 | 25.1 分 | **29.9 分** | 21〜28 tok/s |
 
-### 13.2 適用前 (q8_0、thinking 一律)
+### 14.2 適用前 (q8_0、thinking 一律)
 
 `qwen3.8:27b-q8_0`、生成速度は約 8〜9 トークン/秒 (27B dense をメモリ帯域 273GB/s で動かす際の上限付近)。
 
@@ -419,7 +441,7 @@ Biometrika 2000 (13 頁) での比較:
 
 ---
 
-## 14. 開発時の主な設計判断
+## 15. 開発時の主な設計判断
 
 | 判断 | 理由 |
 |---|---|
@@ -437,7 +459,7 @@ Biometrika 2000 (13 頁) での比較:
 
 ---
 
-## 15. 既知の制約と今後の課題
+## 16. 既知の制約と今後の課題
 
 | 項目 | 内容 |
 |---|---|
@@ -446,5 +468,5 @@ Biometrika 2000 (13 頁) での比較:
 | 文字数超過 | 統合段階では 500 字上限が守られにくく (実測 747〜1741 字)、検証の 1 ラウンド目が文字数修正に使われる |
 | 発行年の欠落 | Docling が欄外 (例: `Biometrika (2000), 87, 1`) を除去するため年・誌名が取れないことがあった。書誌抽出に PDF 1 ページ目の生テキストを渡して対策済み。arXiv プレプリント等で本当に年の記載がない場合は `XXXX` |
 | スキャン PDF | 既定は OCR 無効 (`extract.ocr = true` で対応) |
-| 研究室での共有 | 現在は個人用。複数人での利用時は Syncthing のデバイス追加、または Samba 共有の追加を検討 |
-| 学外アクセス | Syncthing のリレーは無効のため、学外からは VPN (Tailscale 等) 経由が前提 |
+| 研究室での共有 | Web UI (LAN / 公式 VPN) で投稿・閲覧する。Syncthing はネットワークの P2P 禁止規程に配慮して不採用 |
+| 学外アクセス | 大学の公式 VPN 経由で Web UI を使う |
