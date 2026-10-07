@@ -82,19 +82,29 @@ def summarize(ext: Extracted, title: str, llm: OllamaClient, cfg: dict) -> Summa
     summary = shorten_if_needed(normalize(res.content), llm, limit, fmt, stage="shorten:merge")
 
     # 3) 根拠段落との照合ループ
+    #    1 回目は全箇条 (欠落も確認)、2 回目以降は修正で変わった箇条だけを照合する。
+    #    最後の修正のあとにも変わった箇条だけ照合するため、照合は最大 verify_rounds + 1 回。
     result = SummaryResult(markdown=summary, n_chunks=len(units), readings=readings)
-    for rnd in range(1, max_rounds + 1):
+    changed: list[str] | None = None  # None = 全箇条
+    rnd = 0
+    while True:
+        rnd += 1
         issues = format_issues(summary, limit, set(paragraphs))
-        content_issues, failed = verify_against_evidence(summary, readings, paragraphs, ext, llm, limit,
-                                                         stage=f"verify:r{rnd}", num_ctx=cfg.get("verify_num_ctx"))
+        content_issues, failed = verify_against_evidence(
+            summary, readings, paragraphs, ext, llm, stage=f"verify:r{rnd}", targets=changed,
+            num_ctx=cfg.get("verify_num_ctx"))
         issues += content_issues
-        rec = {"round": rnd, "issues": issues}
+        rec = {"round": rnd, "scope": "all" if changed is None else len(changed), "issues": issues}
         if failed:
             rec["verify_failed_parts"] = [1]
         result.rounds.append(rec)
-        log.info("検証 round %d: 指摘 %d 件%s", rnd, len(issues), " (照合失敗)" if failed else "")
+        log.info("検証 round %d (%s): 指摘 %d 件%s", rnd, "全箇条" if changed is None else f"変更 {len(changed)} 箇条",
+                 len(issues), " (照合失敗)" if failed else "")
         if not issues:
             result.converged = not failed
+            break
+        if rnd > max_rounds:
+            log.warning("修正回数の上限 (%d) に達したため、指摘 %d 件を残して終了します", max_rounds, len(issues))
             break
         try:
             res = llm.chat(render("revise", summary=summary, issues=_format_issue_list(issues),
@@ -108,7 +118,13 @@ def summarize(ext: Extracted, title: str, llm: OllamaClient, cfg: dict) -> Summa
             log.warning("修正版で見出しが減ったため採用しません (round %d)", rnd)
             rec["revise_rejected"] = "見出しが減少"
             break
-        summary = shorten_if_needed(revised, llm, limit, fmt, stage=f"shorten:r{rnd}")
+        revised = shorten_if_needed(revised, llm, limit, fmt, stage=f"shorten:r{rnd}")
+        changed = changed_bullets(summary, revised)
+        summary = revised
+        if not changed:
+            log.warning("修正で箇条が変わらなかったため検証を終了します (round %d)", rnd)
+            rec["revise_unchanged"] = True
+            break
 
     if not result.converged:
         remaining = format_issues(summary, limit, set(paragraphs))
@@ -245,12 +261,26 @@ def cited_ids(text: str) -> list[str]:
     return ids
 
 
+def bullets_of(summary: str) -> list[str]:
+    """要約中の全箇条 (流れ・1〜6 の各項目) を、前後の空白を除いて返す。"""
+    return [b for body in split_sections(summary).values() for b in _bullets(body)]
+
+
+def changed_bullets(old: str, new: str) -> list[str]:
+    """修正で追加・変更された箇条 (新しい要約側)。空白の違いは無視する。"""
+    norm = lambda b: re.sub(r"\s+", "", b)  # noqa: E731
+    before = {norm(b) for b in bullets_of(old)}
+    return [b for b in bullets_of(new) if norm(b) not in before]
+
+
 def verify_against_evidence(summary: str, readings: Readings, paragraphs: dict[str, Paragraph],
-                            ext: Extracted, llm: OllamaClient, limit: int, *, stage: str,
+                            ext: Extracted, llm: OllamaClient, *, stage: str, targets: list[str] | None = None,
                             num_ctx=None, max_evidence_chars: int = 80000) -> tuple[list[dict], bool]:
-    """要約が引用した段落の原文だけを渡して照合する。戻り値: (指摘, 照合に失敗したか)。"""
+    """要約が引用した段落の原文を渡して照合する。targets を指定すると、その箇条だけを確認する
+    (根拠段落もその箇条の引用分だけ渡す)。戻り値: (指摘, 照合に失敗したか)。"""
+    scope_text = summary if targets is None else "\n".join(targets)
     evidence, total = [], 0
-    for pid in cited_ids(summary):
+    for pid in cited_ids(scope_text):
         p = paragraphs.get(pid)
         if p is None:
             continue
@@ -260,10 +290,18 @@ def verify_against_evidence(summary: str, readings: Readings, paragraphs: dict[s
             break
         evidence.append(block)
         total += len(block)
+    if targets is None:
+        scope = "要約のすべての箇条。"
+        omission = ("3. 欠落: 「節ごとの要約」から見て、6 項目または論旨の流れにとって重要なのに要約に含まれていない事実"
+                    " (提案手法の主要素、主要な定量結果、著者が明記した限界など)。")
+    else:
+        scope = ("前回の指摘を受けて修正された次の箇条だけ (それ以外の箇条は確認済み):\n"
+                 + "\n".join(f"- {t.lstrip('-*+ ').strip()}" for t in targets))
+        omission = "(今回は欠落の確認は不要)"
     try:
-        data = llm.chat_json(render("verify", summary=summary, evidence="\n\n".join(evidence) or "(なし)",
-                                    section_summaries=readings.section_summaries(ext.sections),
-                                    section_char_limit=limit),
+        data = llm.chat_json(render("verify", scope=scope, omission_rule=omission, summary=summary,
+                                    evidence="\n\n".join(evidence) or "(なし)",
+                                    section_summaries=readings.section_summaries(ext.sections)),
                              stage=f"{stage}:1/1", num_ctx=int(num_ctx) if num_ctx else None)
     except LLMError as e:
         log.warning("照合に失敗 (%s): %s", stage, e)

@@ -119,3 +119,52 @@ def test_parse_reading_text_format():
 
 def test_parse_json_missing_closing_brace():
     assert parse_json('{"issues": [{"fix": "a"}]')["issues"][0]["fix"] == "a"
+
+
+def test_changed_bullets():
+    from paper_summarizer.summarize import changed_bullets
+    new = GOOD.replace("- x である。 [§1-p1]", "- y である。 [§1-p1]", 1)
+    assert changed_bullets(GOOD, new) == ["- y である。 [§1-p1]"]
+    assert changed_bullets(GOOD, GOOD.replace("。 [", "。  [")) == []  # 空白の違いは無視
+
+
+class IncrementalLLM(FakeLLM):
+    """1 回目の照合で指摘 → 修正で 1 箇条だけ変える → 2 回目は変わった箇条だけ照合されるか。"""
+
+    def __init__(self, verdicts):
+        super().__init__({"issues": []})
+        self.verdicts = list(verdicts)
+        self.verify_prompts = []
+        self.n_revise = 0
+
+    def chat(self, prompt, *, stage, **kw):
+        self.stages.append(stage)
+        if stage.startswith("revise"):
+            self.n_revise += 1
+            return LLMResult(GOOD.replace("- x である。 [§1-p1]", f"- 修正{self.n_revise}。 [§1-p1]", 1),
+                             "", 1, 1, 0.1, "stop")
+        return LLMResult(GOOD, "", 1, 1, 0.1, "stop")
+
+    def chat_json(self, prompt, *, stage, **kw):
+        if stage.startswith("verify"):
+            self.stages.append(stage)
+            self.verify_prompts.append(prompt)
+            return self.verdicts.pop(0)
+        return super().chat_json(prompt, stage=stage, **kw)
+
+
+def test_incremental_verification_scope():
+    issue = {"issues": [{"type": "誤り", "section": "流れ", "fix": "直す"}]}
+    llm = IncrementalLLM([issue, {"issues": []}])
+    res = summarize(_ext(), "T", llm, {"verify_rounds": 3})
+    assert res.converged and [r["scope"] for r in res.rounds] == ["all", 1]
+    assert "要約のすべての箇条" in llm.verify_prompts[0] and "欠落:" in llm.verify_prompts[0]
+    assert "修正1。" in llm.verify_prompts[1] and "欠落の確認は不要" in llm.verify_prompts[1]
+
+
+def test_final_revision_is_verified_then_stops():
+    issue = {"issues": [{"type": "誤り", "section": 1, "fix": "直す"}]}
+    llm = IncrementalLLM([issue] * 5)
+    res = summarize(_ext(), "T", llm, {"verify_rounds": 2})
+    # 修正 2 回 + 最後の修正後の照合 = 照合 3 回、指摘が残ったので未収束
+    assert len(res.rounds) == 3 and llm.n_revise == 2 and not res.converged
